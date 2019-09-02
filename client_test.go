@@ -26,6 +26,8 @@ import (
 var (
 	someByteValue    = []byte{1, 2, 3, 4, 5, 20}
 	anotherByteValue = []byte{5, 2, 3, 4, 5, 20}
+
+	memcachedAddress = "127.0.0.1:11211"
 )
 
 var testCases = []struct {
@@ -275,6 +277,16 @@ var testCases = []struct {
 			}
 		},
 	},
+	{
+		name: "SetSlabsAutomoveModeForAddress",
+		test: func(t *testing.T, client *Client) {
+			for _, mode := range []SlabsAutomoveMode{SlabsAutomoveModeStandard, SlabsAutomoveModeAggressive, SlabsAutomoveModeStandby} {
+				if err := client.SetSlabsAutomoveModeForAddress(memcachedAddress, mode); err != nil {
+					t.Fatalf("Expected no error, got %v.", err)
+				}
+			}
+		},
+	},
 }
 
 func TestAgainstMemcached(t *testing.T) {
@@ -283,7 +295,7 @@ func TestAgainstMemcached(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			client, err := NewClient([]string{"127.0.0.1:11211"})
+			client, err := NewClient([]string{memcachedAddress})
 			if err != nil {
 				t.Fatalf("Failed to create client: %v", err)
 			}

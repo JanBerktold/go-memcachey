@@ -14,7 +14,7 @@
    limitations under the License.
 */
 
-// Package memcachey provides a modern, scalable client for the Memcached database.
+// Package memcachey provides a modern, scalable client for the Memcached in-memory database.
 package memcachey // import "github.com/janberktold/go-memcachey"
 
 import (
@@ -54,6 +54,9 @@ var (
 
 	// ErrKeyTooLong means that a passed in key contains more than 250 characters.
 	ErrKeyTooLong = errors.New("key is longer than 250 characters")
+
+	// ErrNoSuchAddress means that the requested address is not known.
+	ErrNoSuchAddress = errors.New("requested address not found")
 )
 
 type ClientOptionsSetter func(client *Client) error
@@ -89,7 +92,7 @@ func WithPoolLimitsPerHost(min, max int) ClientOptionsSetter {
 
 // Client is our interface over the logical connection to several Memcached hosts.
 type Client struct {
-	cp *connectionProvider
+	cp connectionProvider
 
 	minimumConnectionsPerHost int
 	maximumConnectionsPerHost int
@@ -117,7 +120,7 @@ func NewClient(addresses []string, options ...ClientOptionsSetter) (*Client, err
 		}
 	}
 
-	provider, err := newConnectionProvider(addresses,
+	provider, err := newRoundRobinConnectionProvider(addresses,
 		client.minimumConnectionsPerHost, client.maximumConnectionsPerHost, client.connectTimeout)
 	if err != nil {
 		return nil, err
@@ -134,7 +137,7 @@ func (c *Client) Set(key string, value []byte) error {
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -157,7 +160,7 @@ func (c *Client) SetWithExpiry(key string, value []byte, expiry time.Duration) e
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -181,7 +184,7 @@ func (c *Client) Add(key string, value []byte) error {
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -214,7 +217,7 @@ func (c *Client) AddWithExpiry(key string, value []byte, expiry time.Duration) e
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -238,7 +241,7 @@ func (c *Client) Replace(key string, value []byte) error {
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -271,7 +274,7 @@ func (c *Client) ReplaceWithExpiry(key string, value []byte, expiry time.Duratio
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -295,7 +298,7 @@ func (c *Client) Delete(key string) (existed bool, err error) {
 		return false, err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return false, err
 	}
@@ -321,7 +324,7 @@ func (c *Client) Get(key string) ([]byte, error) {
 		return nil, err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return nil, err
 	}
@@ -340,6 +343,7 @@ func (c *Client) Get(key string) ([]byte, error) {
 	return value, nil
 }
 
+// MultiGet queries memcached for a collection of keys.
 func (c *Client) MultiGet(keys []string) (map[string][]byte, error) {
 	for _, key := range keys {
 		if err := verifyKey(key); err != nil {
@@ -347,17 +351,61 @@ func (c *Client) MultiGet(keys []string) (map[string][]byte, error) {
 		}
 	}
 
-	connection, err := c.cp.Get()
+	connections, err := c.cp.ForKeys(keys)
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
 
-	if err := writeRetrieval(connection, "get", keys); err != nil {
-		return nil, err
+	results := map[string][]byte{}
+
+	for connection, keys := range connections {
+		defer connection.Close()
+
+		if err := writeRetrieval(connection, "get", keys); err != nil {
+			return nil, err
+		}
+
+		shardedResult, err := readRetrievalResponse(connection)
+		if err != nil {
+			return nil, err
+		}
+
+		for k, v := range shardedResult {
+			results[k] = v
+		}
 	}
 
-	return readRetrievalResponse(connection)
+	return results, nil
+}
+
+// SlabsAutomoveMode represents the mode for the background thread which can decide
+// on it's own when to move memory between slab classes.
+type SlabsAutomoveMode uint8
+
+const (
+	// SlabsAutomoveModeStandby sets the thread on standby.
+	SlabsAutomoveModeStandby SlabsAutomoveMode = iota
+	// SlabsAutomoveModeStandard means to return pages to a global pool when there are more than 2 pages
+	// worth of free chunks in a slab class. Pages are then re-assigned back into other classes as-needed.
+	SlabsAutomoveModeStandard
+	// SlabsAutomoveModeAggressive is a highly aggressive mode which causes pages to be moved every time
+	// there is an eviction. It is not recommended to run for very long in this
+	// mode unless your access patterns are very well understood.
+	SlabsAutomoveModeAggressive
+)
+
+// SetSlabsAutomoveModeForAddress allows setting the SlabsAutomoveMode on the specified host.
+func (c *Client) SetSlabsAutomoveModeForAddress(address string, mode SlabsAutomoveMode) error {
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	fmt.Fprintf(connection, "slabs automove %d \r\n", mode)
+
+	_, err = readGenericResponse(connection, [][]byte{resultOK})
+	return err
 }
 
 // As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L149
