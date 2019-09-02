@@ -57,6 +57,9 @@ var (
 
 	// ErrNoSuchAddress means that the requested address is not known.
 	ErrNoSuchAddress = errors.New("requested address not found")
+
+	// ErrCommandNotSupported means that the command is not supported on the Memcached server.
+	ErrCommandNotSupported = errors.New("command not supported on memcached host")
 )
 
 type ClientOptionsSetter func(client *Client) error
@@ -318,6 +321,32 @@ func (c *Client) Delete(key string) (existed bool, err error) {
 	return bytes.Equal(response, resultDeleted), nil
 }
 
+// Touch updates the expiration time of an existing item without fetching it.
+func (c *Client) Touch(key string, expirationTime time.Duration) (existed bool, err error) {
+	if err := verifyKey(key); err != nil {
+		return false, err
+	}
+
+	connection, err := c.cp.ForKey(key)
+	if err != nil {
+		return false, err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprintf(connection, "touch %s %d\r\n", key, int(expirationTime.Seconds())); err != nil {
+		return false, err
+	}
+
+	expectedResponses := [][]byte{resultTouched, resultNotFound}
+	response, err := readGenericResponse(connection, expectedResponses)
+	if err != nil {
+		return false, err
+	}
+
+	// TODO: This could be a simpler check.
+	return bytes.Equal(response, resultTouched), nil
+}
+
 // Get queries memcached for a single key and returns the value.
 func (c *Client) Get(key string) ([]byte, error) {
 	if err := verifyKey(key); err != nil {
@@ -402,7 +431,7 @@ func (c *Client) SetSlabsAutomoveModeForAddress(address string, mode SlabsAutomo
 	}
 	defer connection.Close()
 
-	fmt.Fprintf(connection, "slabs automove %d \r\n", mode)
+	fmt.Fprintf(connection, "slabs automove %d\r\n", mode)
 
 	_, err = readGenericResponse(connection, [][]byte{resultOK})
 	return err

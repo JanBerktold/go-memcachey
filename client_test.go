@@ -278,6 +278,49 @@ var testCases = []struct {
 		},
 	},
 	{
+		name: "TouchOnNotSetKey",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			exists, err := client.Touch(key, time.Second*10)
+			if err != nil {
+				t.Fatalf("Failed to touch key: %v", err)
+			}
+
+			if exists {
+				t.Fatalf("Expected key to not exist but it did")
+			}
+		},
+	},
+	{
+		name: "TouchSetKey",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Set(key, someByteValue); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			exists, err := client.Touch(key, time.Second)
+			if err != nil {
+				t.Fatalf("Failed to touch key: %v", err)
+			}
+			if !exists {
+				t.Fatalf("Expected key to exist but it did not")
+			}
+
+			time.Sleep(2 * time.Second)
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if value != nil {
+				t.Fatalf("Expected value to not exist but it did: %v", value)
+			}
+		},
+	},
+	{
 		name: "SetSlabsAutomoveModeForAddress",
 		test: func(t *testing.T, client *Client) {
 			for _, mode := range []SlabsAutomoveMode{SlabsAutomoveModeStandard, SlabsAutomoveModeAggressive, SlabsAutomoveModeStandby} {
