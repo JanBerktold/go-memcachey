@@ -330,6 +330,20 @@ var testCases = []struct {
 			}
 		},
 	},
+	{
+		name: "VersionForAddress",
+		test: func(t *testing.T, client *Client) {
+			version, err := client.VersionForAddress(memcachedAddress)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v.", err)
+			}
+
+			const expectedVersion = "1.5.17"
+			if version != expectedVersion {
+				t.Fatalf("Got %q as version, expected %q.", version, expectedVersion)
+			}
+		},
+	},
 }
 
 func TestAgainstMemcached(t *testing.T) {

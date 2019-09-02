@@ -437,6 +437,21 @@ func (c *Client) SetSlabsAutomoveModeForAddress(address string, mode SlabsAutomo
 	return err
 }
 
+// VersionForAddress returns the reported version for the specified Memcached host.
+func (c *Client) VersionForAddress(address string) (string, error) {
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return "", err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprint(connection, "version\r\n"); err != nil {
+		return "", err
+	}
+
+	return readVersion(connection)
+}
+
 // As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L149
 // <command name> <key> <flags> <exptime> <bytes> [noreply]\r\n
 // <data block>\r\n
@@ -584,6 +599,30 @@ func readGenericResponse(conn net.Conn, expectedResponses [][]byte) ([]byte, err
 	}
 
 	return nil, fmt.Errorf("Unexpected response from memcached: %q", line)
+}
+
+// As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L1153
+// "VERSION <version>\r\n", where <version> is the version string for the server.
+var versionCommandResponsePrefix = []byte("VERSION ")
+
+func readVersion(conn net.Conn) (string, error) {
+	w := bufio.NewReader(conn)
+
+	line, err := w.ReadSlice('\n')
+	if err != nil {
+		return "", err
+	}
+
+	if len(line) <= len(versionCommandResponsePrefix) {
+		return "", fmt.Errorf("Expected VERSION prefix, got %v", line)
+	}
+
+	returnedPrefix := line[0:len(versionCommandResponsePrefix)]
+	if !bytes.Equal(returnedPrefix, versionCommandResponsePrefix) {
+		return "", fmt.Errorf("Expected VERSION prefix, got %v", line)
+	}
+
+	return string(line[len(versionCommandResponsePrefix) : len(line)-2]), nil
 }
 
 func verifyKey(key string) error {
