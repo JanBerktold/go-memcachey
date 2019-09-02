@@ -30,19 +30,54 @@ var (
 	resultTouched   = []byte("TOUCHED\r\n")
 )
 
+type ClientOptionsSetter func(client *Client) error
+
+// WithTimeouts allows specifying custom timeouts for the client.
+func WithTimeouts(connectionTimeout, readTimeout, writeTimeout time.Duration) ClientOptionsSetter {
+	return func(client *Client) error {
+		if connectionTimeout <= 0 {
+			return fmt.Errorf("connectionTimeout has invalid value: %v", connectionTimeout)
+		}
+		if readTimeout <= 0 {
+			return fmt.Errorf("readTimeout has invalid value: %v", readTimeout)
+		}
+		if writeTimeout <= 0 {
+			return fmt.Errorf("writeTimeout has invalid value: %v", writeTimeout)
+		}
+
+		return nil
+	}
+}
+
+// WithPoolLimitsPerHost allows specifying custom min and max limits for the
+// connection pool on a per-host basis.
+func WithPoolLimitsPerHost(min, max int) ClientOptionsSetter {
+	return func(client *Client) error {
+		return nil
+	}
+}
+
+// Client is our interface over the logical connection to several Memcached hosts.
 type Client struct {
 	cp *connectionProvider
 }
 
-func NewClient(addresses []string) (*Client, error) {
+func NewClient(addresses []string, options ...ClientOptionsSetter) (*Client, error) {
+	client := &Client{}
+
+	for _, setter := range options {
+		if err := setter(client); err != nil {
+			return nil, err
+		}
+	}
 	provider, err := newConnectionProvider(addresses)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Client{
-		cp: provider,
-	}, nil
+	client.cp = provider
+
+	return client, nil
 }
 
 // Set sets a key on the Memcached server, regardless of the previous state.
