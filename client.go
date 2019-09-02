@@ -15,7 +15,7 @@
 */
 
 // Package memcachey provides a modern, scalable client for the Memcached database.
-package memcache // import "github.com/janberktold/go-memcache"
+package memcachey // import "github.com/janberktold/go-memcache"
 
 import (
 	"bufio"
@@ -191,6 +191,7 @@ func (c *Client) AddWithExpiry(key string, value []byte, expiry time.Duration) e
 	return nil
 }
 
+// Get queries memcached for a single key and returns the value.
 func (c *Client) Get(key string) ([]byte, error) {
 	if err := verifyKey(key); err != nil {
 		return nil, err
