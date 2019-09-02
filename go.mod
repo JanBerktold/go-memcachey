@@ -1,4 +1,4 @@
-module github.com/janberktold/go-memcache
+module github.com/janberktold/go-memcachey
 
 go 1.12
 

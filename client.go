@@ -1,8 +1,26 @@
-package memcache // import "github.com/janberktold/go-memcache"
+/*
+   Copyright 2019 Jan Berktold <jan@berktold.co>
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+// Package memcachey provides a modern, scalable client for the Memcached in-memory database.
+package memcachey // import "github.com/janberktold/go-memcachey"
 
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -30,19 +48,90 @@ var (
 	resultTouched   = []byte("TOUCHED\r\n")
 )
 
-type Client struct {
-	cp *connectionProvider
+var (
+	// ErrNotStored means that a conditional write operation failed because the condition was not satisfied.
+	ErrNotStored = errors.New("item not stored")
+
+	// ErrKeyTooLong means that a passed in key contains more than 250 characters.
+	ErrKeyTooLong = errors.New("key is longer than 250 characters")
+
+	// ErrNoSuchAddress means that the requested address is not known.
+	ErrNoSuchAddress = errors.New("requested address not found")
+
+	// ErrCommandNotSupported means that the command is not supported on the Memcached server.
+	ErrCommandNotSupported = errors.New("command not supported on memcached host")
+)
+
+type ClientOptionsSetter func(client *Client) error
+
+// WithTimeouts allows specifying custom timeouts for the client.
+func WithTimeouts(connectionTimeout time.Duration) ClientOptionsSetter {
+	return func(client *Client) error {
+		if connectionTimeout <= 0 {
+			return fmt.Errorf("connectionTimeout has invalid value: %v", connectionTimeout)
+		}
+
+		return nil
+	}
 }
 
-func NewClient(addresses []string) (*Client, error) {
-	provider, err := newConnectionProvider(addresses)
+// WithPoolLimitsPerHost allows specifying custom min and max limits for the
+// connection pool on a per-host basis. Defaults to min=1 and max=20 if not set.
+func WithPoolLimitsPerHost(min, max int) ClientOptionsSetter {
+	return func(client *Client) error {
+		if min > max {
+			return fmt.Errorf("min can not be greater than max. min is %v, max is %v", min, max)
+		}
+
+		if max <= 0 {
+			return fmt.Errorf("max must be positive, is %v", max)
+		}
+
+		client.minimumConnectionsPerHost = min
+		client.maximumConnectionsPerHost = max
+		return nil
+	}
+}
+
+// Client is our interface over the logical connection to several Memcached hosts.
+type Client struct {
+	cp connectionProvider
+
+	minimumConnectionsPerHost int
+	maximumConnectionsPerHost int
+
+	connectTimeout time.Duration
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
+}
+
+func NewClient(addresses []string, options ...ClientOptionsSetter) (*Client, error) {
+	client := &Client{
+
+		// Sensible defaults
+		minimumConnectionsPerHost: 1,
+		maximumConnectionsPerHost: 20,
+
+		connectTimeout: 5 * time.Second,
+		readTimeout:    5 * time.Second,
+		writeTimeout:   5 * time.Second,
+	}
+
+	for _, setter := range options {
+		if err := setter(client); err != nil {
+			return nil, err
+		}
+	}
+
+	provider, err := newRoundRobinConnectionProvider(addresses,
+		client.minimumConnectionsPerHost, client.maximumConnectionsPerHost, client.connectTimeout)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Client{
-		cp: provider,
-	}, nil
+	client.cp = provider
+
+	return client, nil
 }
 
 // Set sets a key on the Memcached server, regardless of the previous state.
@@ -51,7 +140,7 @@ func (c *Client) Set(key string, value []byte) error {
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -74,7 +163,7 @@ func (c *Client) SetWithExpiry(key string, value []byte, expiry time.Duration) e
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -92,12 +181,13 @@ func (c *Client) SetWithExpiry(key string, value []byte, expiry time.Duration) e
 }
 
 // Add sets a key on the Memcached server only if the key did not have a value previously.
+// Returns ErrNotStored if the key was assigned a value.
 func (c *Client) Add(key string, value []byte) error {
 	if err := verifyKey(key); err != nil {
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -107,21 +197,30 @@ func (c *Client) Add(key string, value []byte) error {
 		return err
 	}
 
-	if _, err := readStorageResponse(connection); err != nil {
+	storageResultType, err := readStorageResponse(connection)
+	if err != nil {
 		return err
 	}
 
-	return nil
+	switch storageResultType {
+	case writeStorageResultTypeStored:
+		return nil
+	case writeStorageResultTypeNotStored:
+		return ErrNotStored
+	default:
+		return fmt.Errorf("Unexpected result type: %v", storageResultType)
+	}
 }
 
 // AddWithExpiry sets a key on the Memcached server which expires after the specified time,
 // only if the key did not have a value previously.
+// Returns ErrNotStored if the key was assigned a value.
 func (c *Client) AddWithExpiry(key string, value []byte, expiry time.Duration) error {
 	if err := verifyKey(key); err != nil {
 		return err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return err
 	}
@@ -138,12 +237,123 @@ func (c *Client) AddWithExpiry(key string, value []byte, expiry time.Duration) e
 	return nil
 }
 
+// Replace sets a key on the Memcached server only if the key already exists.
+// Returns ErrNotStored if the key did not have a value.
+func (c *Client) Replace(key string, value []byte) error {
+	if err := verifyKey(key); err != nil {
+		return err
+	}
+
+	connection, err := c.cp.ForKey(key)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if err := writeStorage(connection, "replace", key, 0, value); err != nil {
+		return err
+	}
+
+	storageResultType, err := readStorageResponse(connection)
+	if err != nil {
+		return err
+	}
+
+	switch storageResultType {
+	case writeStorageResultTypeStored:
+		return nil
+	case writeStorageResultTypeNotStored:
+		return ErrNotStored
+	default:
+		return fmt.Errorf("Unexpected result type: %v", storageResultType)
+	}
+}
+
+// ReplaceWithExpiry sets a key on the Memcached server which expires after the specified time,
+// only if the key already exists.
+// Returns ErrNotStored if the key did not have a value.
+func (c *Client) ReplaceWithExpiry(key string, value []byte, expiry time.Duration) error {
+	if err := verifyKey(key); err != nil {
+		return err
+	}
+
+	connection, err := c.cp.ForKey(key)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if err := writeStorage(connection, "replace", key, expiry, value); err != nil {
+		return err
+	}
+
+	if _, err := readStorageResponse(connection); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Delete marks a key as deleted in memcached.
+// Returns true if the key existed.
+func (c *Client) Delete(key string) (existed bool, err error) {
+	if err := verifyKey(key); err != nil {
+		return false, err
+	}
+
+	connection, err := c.cp.ForKey(key)
+	if err != nil {
+		return false, err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprintf(connection, "delete %s\r\n", key); err != nil {
+		return false, err
+	}
+
+	expectedResponses := [][]byte{resultNotFound, resultDeleted}
+	response, err := readGenericResponse(connection, expectedResponses)
+	if err != nil {
+		return false, err
+	}
+
+	// TODO: This could be a simpler check.
+	return bytes.Equal(response, resultDeleted), nil
+}
+
+// Touch updates the expiration time of an existing item without fetching it.
+func (c *Client) Touch(key string, expirationTime time.Duration) (existed bool, err error) {
+	if err := verifyKey(key); err != nil {
+		return false, err
+	}
+
+	connection, err := c.cp.ForKey(key)
+	if err != nil {
+		return false, err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprintf(connection, "touch %s %d\r\n", key, int(expirationTime.Seconds())); err != nil {
+		return false, err
+	}
+
+	expectedResponses := [][]byte{resultTouched, resultNotFound}
+	response, err := readGenericResponse(connection, expectedResponses)
+	if err != nil {
+		return false, err
+	}
+
+	// TODO: This could be a simpler check.
+	return bytes.Equal(response, resultTouched), nil
+}
+
+// Get queries memcached for a single key and returns the value.
 func (c *Client) Get(key string) ([]byte, error) {
 	if err := verifyKey(key); err != nil {
 		return nil, err
 	}
 
-	connection, err := c.cp.Get()
+	connection, err := c.cp.ForKey(key)
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +370,71 @@ func (c *Client) Get(key string) ([]byte, error) {
 
 	value, _ := values[key]
 	return value, nil
+}
+
+// MultiGet queries memcached for a collection of keys.
+func (c *Client) MultiGet(keys []string) (map[string][]byte, error) {
+	for _, key := range keys {
+		if err := verifyKey(key); err != nil {
+			return nil, err
+		}
+	}
+
+	connections, err := c.cp.ForKeys(keys)
+	if err != nil {
+		return nil, err
+	}
+
+	results := map[string][]byte{}
+
+	for connection, keys := range connections {
+		defer connection.Close()
+
+		if err := writeRetrieval(connection, "get", keys); err != nil {
+			return nil, err
+		}
+
+		shardedResult, err := readRetrievalResponse(connection)
+		if err != nil {
+			return nil, err
+		}
+
+		for k, v := range shardedResult {
+			results[k] = v
+		}
+	}
+
+	return results, nil
+}
+
+// SlabsAutomoveMode represents the mode for the background thread which can decide
+// on it's own when to move memory between slab classes.
+type SlabsAutomoveMode uint8
+
+const (
+	// SlabsAutomoveModeStandby sets the thread on standby.
+	SlabsAutomoveModeStandby SlabsAutomoveMode = iota
+	// SlabsAutomoveModeStandard means to return pages to a global pool when there are more than 2 pages
+	// worth of free chunks in a slab class. Pages are then re-assigned back into other classes as-needed.
+	SlabsAutomoveModeStandard
+	// SlabsAutomoveModeAggressive is a highly aggressive mode which causes pages to be moved every time
+	// there is an eviction. It is not recommended to run for very long in this
+	// mode unless your access patterns are very well understood.
+	SlabsAutomoveModeAggressive
+)
+
+// SetSlabsAutomoveModeForAddress allows setting the SlabsAutomoveMode on the specified host.
+func (c *Client) SetSlabsAutomoveModeForAddress(address string, mode SlabsAutomoveMode) error {
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	fmt.Fprintf(connection, "slabs automove %d\r\n", mode)
+
+	_, err = readGenericResponse(connection, [][]byte{resultOK})
+	return err
 }
 
 // As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L149
@@ -294,6 +569,27 @@ func readValueResponseLine(line []byte) (isValue bool, key string, flags int, va
 	return true, key, flags, valueLength, cas
 }
 
+func readGenericResponse(conn net.Conn, expectedResponses [][]byte) ([]byte, error) {
+	w := bufio.NewReader(conn)
+
+	line, err := w.ReadSlice('\n')
+	if err != nil {
+		return nil, err
+	}
+
+	for _, response := range expectedResponses {
+		if bytes.Equal(response, line) {
+			return response, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Unexpected response from memcached: %q", line)
+}
+
 func verifyKey(key string) error {
+	if len(key) > 250 {
+		return ErrKeyTooLong
+	}
+
 	return nil
 }

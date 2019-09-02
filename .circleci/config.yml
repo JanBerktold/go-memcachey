@@ -4,10 +4,10 @@ jobs:
     docker:
       - image: circleci/golang:1.12.6
       # This is what we're running our integration tests against.
-      - image: memcached:1.5.16-alpine
+      - image: memcached:1.5.17-alpine
 
     steps:
       - checkout
 
       - run: go get -v -t -d ./...
-      - run: go test -v ./...
+      - run: go test -v -cover ./...
