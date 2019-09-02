@@ -52,6 +52,12 @@ var (
 	// ErrNotStored means that a conditional write operation failed because the condition was not satisfied.
 	ErrNotStored = errors.New("item not stored")
 
+	// ErrNotFound means that the operation expected a key+value to be present, but they were not.
+	ErrNotFound = errors.New("key not found")
+
+	// ErrNotAnInteger means that we expected an integer but did not find one.
+	ErrNotAnInteger = errors.New("value is not an integer")
+
 	// ErrKeyTooLong means that a passed in key contains more than 250 characters.
 	ErrKeyTooLong = errors.New("key is longer than 250 characters")
 
@@ -105,6 +111,8 @@ type Client struct {
 	writeTimeout   time.Duration
 }
 
+// NewClient creates a new Memcached client. The addresses are used round-robin by default,
+// make sure to pass in the correct options.
 func NewClient(addresses []string, options ...ClientOptionsSetter) (*Client, error) {
 	client := &Client{
 
@@ -155,6 +163,11 @@ func (c *Client) Set(key string, value []byte) error {
 	}
 
 	return nil
+}
+
+// SetUInt64 sets a key on the Memcached server to the specified integer, regardless of the previous state.
+func (c *Client) SetUInt64(key string, value uint64) error {
+	return c.Set(key, []byte(fmt.Sprintf("%d", value)))
 }
 
 // SetWithExpiry sets a key on the Memcached server which expires after a duration, regardless of the previous state.
@@ -372,6 +385,23 @@ func (c *Client) Get(key string) ([]byte, error) {
 	return value, nil
 }
 
+// GetUInt64 queries memcached for a single key and returns the value as an uint64.
+// Returns an ErrNotAnInteger if we did not find an integer.
+func (c *Client) GetUInt64(key string) (uint64, error) {
+	value, err := c.Get(key)
+	if err != nil {
+		return 0, err
+	}
+
+	serializedValue := strings.Trim(string(value), "\r\n ")
+	parsedValue, err := strconv.ParseUint(serializedValue, 10, 64)
+	if err != nil {
+		return 0, ErrNotAnInteger
+	}
+
+	return parsedValue, nil
+}
+
 // MultiGet queries memcached for a collection of keys.
 func (c *Client) MultiGet(keys []string) (map[string][]byte, error) {
 	for _, key := range keys {
@@ -435,6 +465,84 @@ func (c *Client) SetSlabsAutomoveModeForAddress(address string, mode SlabsAutomo
 
 	_, err = readGenericResponse(connection, [][]byte{resultOK})
 	return err
+}
+
+// VersionForAddress returns the reported version for the specified Memcached host.
+func (c *Client) VersionForAddress(address string) (string, error) {
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return "", err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprint(connection, "version\r\n"); err != nil {
+		return "", err
+	}
+
+	return readVersion(connection)
+}
+
+// FlushAllForAddress allows flushing an entire Memcached host.
+func (c *Client) FlushAllForAddress(address string) error {
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprint(connection, "flush_all\r\n"); err != nil {
+		return err
+	}
+
+	_, err = readGenericResponse(connection, [][]byte{resultOK})
+	return err
+}
+
+// FlushAllWithDelayForAddress allows flushing an entire Memcached host
+// with a delay before the deletions take effect.
+func (c *Client) FlushAllWithDelayForAddress(address string, delay time.Duration) error {
+	if delay <= 0 {
+		return fmt.Errorf("delay must be positive, got %v", delay)
+	}
+
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprintf(connection, "flush_all %d\r\n", int(delay.Seconds())); err != nil {
+		return err
+	}
+
+	_, err = readGenericResponse(connection, [][]byte{resultOK})
+	return err
+}
+
+// Increment increments the value saved for the specified key, if it exists.
+// Returns a ErrKeyNotFound if the key does not yet exist.
+func (c *Client) Increment(key string, delta uint64) (uint64, error) {
+	return c.incrDecr("incr", key, delta)
+}
+
+// Decrement decrements the value saved for the specified key, if it exists.
+// Returns a ErrKeyNotFound if the key does not yet exist.
+func (c *Client) Decrement(key string, delta uint64) (uint64, error) {
+	return c.incrDecr("decr", key, delta)
+}
+
+func (c *Client) incrDecr(command, key string, delta uint64) (uint64, error) {
+	connection, err := c.cp.ForKey(key)
+	if err != nil {
+		return 0, err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprintf(connection, "%s %s %d\r\n", command, key, delta); err != nil {
+		return 0, err
+	}
+
+	return readIncrementDecrementResponse(connection)
 }
 
 // As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L149
@@ -584,6 +692,46 @@ func readGenericResponse(conn net.Conn, expectedResponses [][]byte) ([]byte, err
 	}
 
 	return nil, fmt.Errorf("Unexpected response from memcached: %q", line)
+}
+
+// As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L1153
+// "VERSION <version>\r\n", where <version> is the version string for the server.
+var versionCommandResponsePrefix = []byte("VERSION ")
+
+func readVersion(conn net.Conn) (string, error) {
+	w := bufio.NewReader(conn)
+
+	line, err := w.ReadSlice('\n')
+	if err != nil {
+		return "", err
+	}
+
+	if len(line) <= len(versionCommandResponsePrefix) {
+		return "", fmt.Errorf("Expected VERSION prefix, got %v", line)
+	}
+
+	returnedPrefix := line[0:len(versionCommandResponsePrefix)]
+	if !bytes.Equal(returnedPrefix, versionCommandResponsePrefix) {
+		return "", fmt.Errorf("Expected VERSION prefix, got %v", line)
+	}
+
+	return string(line[len(versionCommandResponsePrefix) : len(line)-2]), nil
+}
+
+func readIncrementDecrementResponse(conn net.Conn) (uint64, error) {
+	w := bufio.NewReader(conn)
+
+	line, err := w.ReadSlice('\n')
+	if err != nil {
+		return 0, err
+	}
+
+	if bytes.Equal(line, resultNotFound) {
+		return 0, ErrNotFound
+	}
+
+	value := strings.TrimRight(string(line), "\r\n ")
+	return strconv.ParseUint(value, 10, 64)
 }
 
 func verifyKey(key string) error {

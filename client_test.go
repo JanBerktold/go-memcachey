@@ -31,8 +31,9 @@ var (
 )
 
 var testCases = []struct {
-	name string
-	test func(t *testing.T, client *Client)
+	name      string
+	exclusive bool // tests are run in parallel by default
+	test      func(t *testing.T, client *Client)
 }{
 	{
 		name: "SimpleSet",
@@ -330,13 +331,163 @@ var testCases = []struct {
 			}
 		},
 	},
+	{
+		name: "VersionForAddress",
+		test: func(t *testing.T, client *Client) {
+			version, err := client.VersionForAddress(memcachedAddress)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v.", err)
+			}
+
+			const expectedVersion = "1.5.17"
+			if version != expectedVersion {
+				t.Fatalf("Got %q as version, expected %q.", version, expectedVersion)
+			}
+		},
+	},
+	{
+		name:      "SetKeyAndThenFlushAllForAddress",
+		exclusive: true,
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Set(key, someByteValue); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			if err := client.FlushAllForAddress(memcachedAddress); err != nil {
+				t.Fatalf("Expected no error, but got %v", err)
+			}
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if value != nil {
+				t.Fatalf("Expected value to not exist but it did: %v", value)
+			}
+		},
+	},
+	{
+		name:      "SetKeyAndThenFlushAllWithDelayForAddress",
+		exclusive: true,
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Set(key, someByteValue); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			if err := client.FlushAllWithDelayForAddress(memcachedAddress, 1*time.Second); err != nil {
+				t.Fatalf("Expected no error, but got %v", err)
+			}
+
+			time.Sleep(2 * time.Second)
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if value != nil {
+				t.Fatalf("Expected value to not exist but it did: %v", value)
+			}
+		},
+	},
+	{
+		name: "IncrementOnUnSetKey",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			const delta = 10
+			if _, err := client.Increment(key, delta); err != ErrNotFound {
+				t.Fatalf("Expected ErrKeyNotFound but got %v", err)
+			}
+		},
+	},
+	{
+		name: "IncrementValue",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			const delta = uint64(10)
+
+			if err := client.SetUInt64(key, delta); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			returnedValue, err := client.Increment(key, delta)
+
+			if err != nil {
+				t.Fatalf("Expected error to be nil, got %v", err)
+			}
+
+			const expectedValue = delta * 2
+			if returnedValue != expectedValue {
+				t.Fatalf("Expected %v, got %v.", expectedValue, returnedValue)
+			}
+
+			returnedValue, err = client.GetUInt64(key)
+			if err != nil {
+				t.Fatalf("Expected error to be nil, got %v", err)
+			}
+			if returnedValue != expectedValue {
+				t.Fatalf("Expected %v, got %v.", expectedValue, returnedValue)
+			}
+		},
+	},
+	{
+		name: "DecrementOnUnSetKey",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			const delta = 10
+			if _, err := client.Decrement(key, delta); err != ErrNotFound {
+				t.Fatalf("Expected ErrKeyNotFound but got %v", err)
+			}
+		},
+	},
+	{
+		name: "DecrementValue",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			const delta = uint64(10)
+
+			if err := client.SetUInt64(key, delta); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			returnedValue, err := client.Decrement(key, delta)
+
+			if err != nil {
+				t.Fatalf("Expected error to be nil, got %v", err)
+			}
+
+			const expectedValue = 0
+			if returnedValue != expectedValue {
+				t.Fatalf("Expected %v, got %v.", expectedValue, returnedValue)
+			}
+
+			returnedValue, err = client.GetUInt64(key)
+			if err != nil {
+				t.Fatalf("Expected error to be nil, got %v", err)
+			}
+			if returnedValue != expectedValue {
+				t.Fatalf("Expected %v, got %v.", expectedValue, returnedValue)
+			}
+		},
+	},
 }
 
 func TestAgainstMemcached(t *testing.T) {
 	for _, test := range testCases {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+			if !test.exclusive {
+				t.Parallel()
+			}
 
 			client, err := NewClient([]string{memcachedAddress})
 			if err != nil {
