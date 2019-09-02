@@ -187,6 +187,18 @@ type SettingsStatistics struct {
 
 	// MaxConnections is the maximum number of clients allowed
 	MaxConnections uint32 `proto:"maxconns"`
+
+	// SlabReassignAllowed represents whether slab page reassignment is allowed
+	SlabReassignAllowed bool `proto:"slab_reassign"`
+
+	// SlabAutomoverMode represents the current mode.
+	SlabAutomoverMode SlabsAutomoveMode `proto:"slab_automove"`
+
+	// SlabAutomoverRatio is the ratio limit between young/old slab classes
+	SlabAutomoverRatio float64 `proto:"slab_automove_ratio"`
+
+	// SlabAutomoverWindow is an internal algo tunable for automove
+	SlabAutomoverWindow uint32 `proto:"slab_automove_window"`
 }
 
 /*
@@ -210,12 +222,8 @@ type SettingsStatistics struct {
 | item_size_max     | size_t   | maximum item size                            |
 | maxconns_fast     | bool     | If fast disconnects are enabled              |
 | hashpower_init    | 32       | Starting size multiplier for hash table      |
-| slab_reassign     | bool     | Whether slab page reassignment is allowed    |
-| slab_automove     | bool     | Whether slab page automover is enabled       |
-| slab_automove_ratio                                                         |
-|                   | float    | Ratio limit between young/old slab classes   |
-| slab_automove_window                                                        |
-|                   | 32u      | Internal algo tunable for automove           |
+
+
 | slab_chunk_max    | 32       | Max slab class size (avoid unless necessary) |
 | hash_algorithm    | char     | Hash table algorithm in use                  |
 | lru_crawler       | bool     | Whether the LRU crawler is enabled           |
@@ -239,8 +247,6 @@ type SettingsStatistics struct {
 |                   |          | which the background thread reads from.      |
 | track_sizes       | bool     | If yes, a "stats sizes" histogram is being   |
 |                   |          | dynamically tracked.                         |
-| inline_ascii_response                                                       |
-|                   | bool     | Does nothing as of 1.5.15                    |
 | drop_privileges   | bool     | If yes, and available, drop unused syscalls  |
 |                   |          | (see seccomp on Linux, pledge on OpenBSD)    |
 */
@@ -416,8 +422,8 @@ func (c *Client) ItemStatisticsForAddress(address string) (map[string]*ItemStati
 	return statistics, nil
 }
 
-type SlabStatistics struct {
-}
+//type SlabStatistics struct {
+//}
 
 /*
 | chunk_size      | The amount of space each chunk uses. One item will use   |
@@ -504,6 +510,16 @@ func parseSettingsResponse(conn net.Conn, instanceGetter func(prefix string) int
 					}
 
 					instanceElem.Field(i).SetUint(value)
+				case "float64":
+					value, err := strconv.ParseFloat(value, 64)
+					if err != nil {
+						return err
+					}
+
+					instanceElem.Field(i).SetFloat(value)
+				case "bool":
+					isTrue := value == "1" || value == "yes"
+					instanceElem.Field(i).SetBool(isTrue)
 				case "string":
 					instanceElem.Field(i).SetString(value)
 				case "Duration":
@@ -513,6 +529,13 @@ func parseSettingsResponse(conn net.Conn, instanceGetter func(prefix string) int
 					}
 
 					instanceElem.Field(i).Set(reflect.ValueOf(time.Duration(value)))
+				case "SlabsAutomoveMode":
+					value, err := strconv.ParseUint(value, 10, 64)
+					if err != nil {
+						return err
+					}
+
+					instanceElem.Field(i).Set(reflect.ValueOf(SlabsAutomoveMode(value)))
 				default:
 					return fmt.Errorf("Found correct field for key %v but unsupported type %v", key, field.Type.Name())
 				}

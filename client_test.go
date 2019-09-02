@@ -327,8 +327,18 @@ var testCases = []struct {
 		name: "SetSlabsAutomoveModeForAddress",
 		test: func(t *testing.T, client *Client) {
 			for _, mode := range []SlabsAutomoveMode{SlabsAutomoveModeStandard, SlabsAutomoveModeAggressive, SlabsAutomoveModeStandby} {
+
 				if err := client.SetSlabsAutomoveModeForAddress(memcachedAddress, mode); err != nil {
 					t.Fatalf("Expected no error, got %v.", err)
+				}
+
+				statistics, err := client.SettingsStatisticsForAddress(memcachedAddress)
+				if err != nil {
+					t.Fatalf("Expected no error, got %v.", err)
+				}
+
+				if statistics.SlabAutomoverMode != mode {
+					t.Fatalf("Expected mode %v, but got %v.", mode, statistics.SlabAutomoverMode)
 				}
 			}
 		},
