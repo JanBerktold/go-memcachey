@@ -24,7 +24,8 @@ import (
 )
 
 var (
-	someByteValue = []byte{1, 2, 3, 4, 5, 20}
+	someByteValue    = []byte{1, 2, 3, 4, 5, 20}
+	anotherByteValue = []byte{5, 2, 3, 4, 5, 20}
 )
 
 var testCases = []struct {
@@ -42,7 +43,7 @@ var testCases = []struct {
 		},
 	},
 	{
-		name: "SimpleSetThenGet",
+		name: "SetThenGet",
 		test: func(t *testing.T, client *Client) {
 			key := memcachedTestKey(t)
 
@@ -57,6 +58,90 @@ var testCases = []struct {
 
 			if !bytes.Equal(someByteValue, value) {
 				t.Fatalf("Returned response is not equal to expected. Got %v, expected %v.", value, someByteValue)
+			}
+		},
+	},
+	{
+		name: "SetWithExpiryAndWaitForExpiration",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.SetWithExpiry(key, someByteValue, time.Second); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			time.Sleep(2 * time.Second)
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if value != nil {
+				t.Fatalf("Returned value even though it should have been expired: %v", value)
+			}
+		},
+	},
+	{
+		name: "AddThenGet",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Add(key, someByteValue); err != nil {
+				t.Fatalf("Failed to add key: %v", err)
+			}
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if !bytes.Equal(someByteValue, value) {
+				t.Fatalf("Returned response is not equal to expected. Got %v, expected %v.", value, someByteValue)
+			}
+		},
+	},
+	{
+		name: "SetThenAdd",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Set(key, someByteValue); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			if err := client.Add(key, anotherByteValue); err != ErrNotStored {
+				t.Fatalf("Expected ErrNotStored, but got %v", err)
+			}
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if !bytes.Equal(someByteValue, value) {
+				t.Fatalf("Returned response is not equal to expected. Got %v, expected %v.", value, someByteValue)
+			}
+		},
+	},
+	{
+		name: "AddWithExpiryAndWaitForExpiration",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.AddWithExpiry(key, someByteValue, time.Second); err != nil {
+				t.Fatalf("Failed to add key: %v", err)
+			}
+
+			time.Sleep(2 * time.Second)
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if value != nil {
+				t.Fatalf("Returned value even though it should have been expired: %v", value)
 			}
 		},
 	},

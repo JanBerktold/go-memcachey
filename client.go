@@ -20,6 +20,7 @@ package memcachey // import "github.com/janberktold/go-memcachey"
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -45,6 +46,11 @@ var (
 	resultDeleted   = []byte("DELETED\r\n")
 	resultEnd       = []byte("END\r\n")
 	resultTouched   = []byte("TOUCHED\r\n")
+)
+
+var (
+	// ErrNotStored means that a conditional write operation failed because the condition was not satisfied.
+	ErrNotStored = errors.New("item not stored")
 )
 
 type ClientOptionsSetter func(client *Client) error
@@ -160,11 +166,19 @@ func (c *Client) Add(key string, value []byte) error {
 		return err
 	}
 
-	if _, err := readStorageResponse(connection); err != nil {
+	storageResultType, err := readStorageResponse(connection)
+	if err != nil {
 		return err
 	}
 
-	return nil
+	switch storageResultType {
+	case writeStorageResultTypeStored:
+		return nil
+	case writeStorageResultTypeNotStored:
+		return ErrNotStored
+	default:
+		return fmt.Errorf("Unexpected result type: %v", storageResultType)
+	}
 }
 
 // AddWithExpiry sets a key on the Memcached server which expires after the specified time,
@@ -216,23 +230,6 @@ func (c *Client) Delete(key string) (existed bool, err error) {
 
 	// TODO: This could be a simpler check.
 	return bytes.Equal(response, resultDeleted), nil
-}
-
-func readGenericResponse(conn net.Conn, expectedResponses [][]byte) ([]byte, error) {
-	w := bufio.NewReader(conn)
-
-	line, err := w.ReadSlice('\n')
-	if err != nil {
-		return nil, err
-	}
-
-	for _, response := range expectedResponses {
-		if bytes.Equal(response, line) {
-			return response, nil
-		}
-	}
-
-	return nil, fmt.Errorf("Unexpected response from memcached: %q", line)
 }
 
 // Get queries memcached for a single key and returns the value.
@@ -390,6 +387,23 @@ func readValueResponseLine(line []byte) (isValue bool, key string, flags int, va
 	}
 
 	return true, key, flags, valueLength, cas
+}
+
+func readGenericResponse(conn net.Conn, expectedResponses [][]byte) ([]byte, error) {
+	w := bufio.NewReader(conn)
+
+	line, err := w.ReadSlice('\n')
+	if err != nil {
+		return nil, err
+	}
+
+	for _, response := range expectedResponses {
+		if bytes.Equal(response, line) {
+			return response, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Unexpected response from memcached: %q", line)
 }
 
 func verifyKey(key string) error {
