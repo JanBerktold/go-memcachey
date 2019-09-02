@@ -31,8 +31,9 @@ var (
 )
 
 var testCases = []struct {
-	name string
-	test func(t *testing.T, client *Client)
+	name      string
+	exclusive bool
+	test      func(t *testing.T, client *Client)
 }{
 	{
 		name: "SimpleSet",
@@ -344,13 +345,65 @@ var testCases = []struct {
 			}
 		},
 	},
+	{
+		name:      "SetKeyAndThenFlushAllForAddress",
+		exclusive: true,
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Set(key, someByteValue); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			if err := client.FlushAllForAddress(memcachedAddress); err != nil {
+				t.Fatalf("Expected no error, but got %v", err)
+			}
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if value != nil {
+				t.Fatalf("Expected value to not exist but it did: %v", value)
+			}
+		},
+	},
+	{
+		name:      "SetKeyAndThenFlushAllWithDelayForAddress",
+		exclusive: true,
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Set(key, someByteValue); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			if err := client.FlushAllWithDelayForAddress(memcachedAddress, 1*time.Second); err != nil {
+				t.Fatalf("Expected no error, but got %v", err)
+			}
+
+			time.Sleep(2 * time.Second)
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if value != nil {
+				t.Fatalf("Expected value to not exist but it did: %v", value)
+			}
+		},
+	},
 }
 
 func TestAgainstMemcached(t *testing.T) {
 	for _, test := range testCases {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+			if !test.exclusive {
+				t.Parallel()
+			}
 
 			client, err := NewClient([]string{memcachedAddress})
 			if err != nil {

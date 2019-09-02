@@ -452,6 +452,43 @@ func (c *Client) VersionForAddress(address string) (string, error) {
 	return readVersion(connection)
 }
 
+// FlushAllForAddress allows flushing an entire Memcached host.
+func (c *Client) FlushAllForAddress(address string) error {
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprint(connection, "flush_all\r\n"); err != nil {
+		return err
+	}
+
+	_, err = readGenericResponse(connection, [][]byte{resultOK})
+	return err
+}
+
+// FlushAllWithDelayForAddress allows flushing an entire Memcached host
+// with a delay before the deletions take effect.
+func (c *Client) FlushAllWithDelayForAddress(address string, delay time.Duration) error {
+	if delay <= 0 {
+		return fmt.Errorf("delay must be positive, got %v", delay)
+	}
+
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprintf(connection, "flush_all %d\r\n", int(delay.Seconds())); err != nil {
+		return err
+	}
+
+	_, err = readGenericResponse(connection, [][]byte{resultOK})
+	return err
+}
+
 // As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L149
 // <command name> <key> <flags> <exptime> <bytes> [noreply]\r\n
 // <data block>\r\n
