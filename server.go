@@ -19,6 +19,7 @@ package memcachey
 import (
 	"net"
 	"sync/atomic"
+	"time"
 
 	"github.com/fatih/pool"
 )
@@ -28,12 +29,17 @@ type connectionProvider struct {
 	roundRobinIndex uint64
 }
 
-func newConnectionProvider(addresses []string) (*connectionProvider, error) {
+func newConnectionProvider(addresses []string, minCons, maxCons int, connectTimeout time.Duration) (*connectionProvider, error) {
 	pools := make([]pool.Pool, len(addresses))
 	for i, address := range addresses {
 		address := address
-		p, err := pool.NewChannelPool(5, 30, func() (net.Conn, error) {
-			return net.Dial("tcp", address)
+		p, err := pool.NewChannelPool(minCons, maxCons, func() (net.Conn, error) {
+			conn, err := net.DialTimeout("tcp", address, connectTimeout)
+			if err != nil {
+				return nil, err
+			}
+
+			return conn, nil
 		})
 
 		if err != nil {

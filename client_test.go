@@ -125,6 +125,48 @@ var testCases = []struct {
 		},
 	},
 	{
+		name: "ReplaceOnNotSetKey",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Replace(key, someByteValue); err != ErrNotStored {
+				t.Fatalf("Expected to get ErrNotStored, got %v", err)
+			}
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if value != nil {
+				t.Fatalf("Expected no value to be stored, got %v.", value)
+			}
+		},
+	},
+	{
+		name: "SetThenReplace",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Set(key, someByteValue); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			if err := client.Replace(key, anotherByteValue); err != nil {
+				t.Fatalf("Failed to replace key: %v", err)
+			}
+
+			value, err := client.Get(key)
+			if err != nil {
+				t.Fatalf("Failed to get key: %v", err)
+			}
+
+			if !bytes.Equal(anotherByteValue, value) {
+				t.Fatalf("Returned response is not equal to expected. Got %v, expected %v.", value, someByteValue)
+			}
+		},
+	},
+	{
 		name: "AddWithExpiryAndWaitForExpiration",
 		test: func(t *testing.T, client *Client) {
 			key := memcachedTestKey(t)
@@ -179,10 +221,63 @@ var testCases = []struct {
 			}
 		},
 	},
+	{
+		name: "MultiGetWithNoResults",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			values, err := client.MultiGet([]string{key})
+			if err != nil {
+				t.Fatalf("Failed to retrieve keys: %v", err)
+			}
+
+			if values == nil {
+				t.Fatalf("Expected value to be empty map, not nil")
+			}
+
+			if len(values) != 0 {
+				t.Fatalf("Expected values to be empty but has %v members", len(values))
+			}
+		},
+	},
+	{
+		name: "MultiGetWithSomeResults",
+		test: func(t *testing.T, client *Client) {
+			keys := memcachedTestKeys(t, 10)
+
+			for i := 0; i < 5; i++ {
+				if err := client.Set(keys[i], someByteValue); err != nil {
+					t.Fatalf("Failed to set key: %v", err)
+				}
+			}
+
+			values, err := client.MultiGet(keys)
+			if err != nil {
+				t.Fatalf("Failed to retrieve keys: %v", err)
+			}
+
+			if values == nil {
+				t.Fatalf("Expected value to be map, not nil")
+			}
+
+			if len(values) != 5 {
+				t.Fatalf("Expected values have 5 members but has %v members", len(values))
+			}
+
+			for i := 0; i < 5; i++ {
+				if value, ok := values[keys[i]]; ok {
+					if !bytes.Equal(value, someByteValue) {
+						t.Fatalf("Expected returned value to be %v, got %v.", someByteValue, value)
+					}
+				} else {
+					t.Fatalf("Expected result for key %v to be returned but was not", keys[i])
+				}
+			}
+		},
+	},
 }
 
 func TestAgainstMemcached(t *testing.T) {
-
 	for _, test := range testCases {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -200,4 +295,14 @@ func TestAgainstMemcached(t *testing.T) {
 
 func memcachedTestKey(t *testing.T) string {
 	return fmt.Sprintf("%s_something_%d", t.Name(), time.Now().Second())
+}
+
+func memcachedTestKeys(t *testing.T, num int) []string {
+	result := make([]string, num)
+
+	for i := 0; i < num; i++ {
+		result[i] = fmt.Sprintf("%s_something_%d_%d", t.Name(), time.Now().Second(), i)
+	}
+
+	return result
 }

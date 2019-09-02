@@ -51,21 +51,18 @@ var (
 var (
 	// ErrNotStored means that a conditional write operation failed because the condition was not satisfied.
 	ErrNotStored = errors.New("item not stored")
+
+	// ErrKeyTooLong means that a passed in key contains more than 250 characters.
+	ErrKeyTooLong = errors.New("key is longer than 250 characters")
 )
 
 type ClientOptionsSetter func(client *Client) error
 
 // WithTimeouts allows specifying custom timeouts for the client.
-func WithTimeouts(connectionTimeout, readTimeout, writeTimeout time.Duration) ClientOptionsSetter {
+func WithTimeouts(connectionTimeout time.Duration) ClientOptionsSetter {
 	return func(client *Client) error {
 		if connectionTimeout <= 0 {
 			return fmt.Errorf("connectionTimeout has invalid value: %v", connectionTimeout)
-		}
-		if readTimeout <= 0 {
-			return fmt.Errorf("readTimeout has invalid value: %v", readTimeout)
-		}
-		if writeTimeout <= 0 {
-			return fmt.Errorf("writeTimeout has invalid value: %v", writeTimeout)
 		}
 
 		return nil
@@ -73,9 +70,19 @@ func WithTimeouts(connectionTimeout, readTimeout, writeTimeout time.Duration) Cl
 }
 
 // WithPoolLimitsPerHost allows specifying custom min and max limits for the
-// connection pool on a per-host basis.
+// connection pool on a per-host basis. Defaults to min=1 and max=20 if not set.
 func WithPoolLimitsPerHost(min, max int) ClientOptionsSetter {
 	return func(client *Client) error {
+		if min > max {
+			return fmt.Errorf("min can not be greater than max. min is %v, max is %v", min, max)
+		}
+
+		if max <= 0 {
+			return fmt.Errorf("max must be positive, is %v", max)
+		}
+
+		client.minimumConnectionsPerHost = min
+		client.maximumConnectionsPerHost = max
 		return nil
 	}
 }
@@ -83,10 +90,26 @@ func WithPoolLimitsPerHost(min, max int) ClientOptionsSetter {
 // Client is our interface over the logical connection to several Memcached hosts.
 type Client struct {
 	cp *connectionProvider
+
+	minimumConnectionsPerHost int
+	maximumConnectionsPerHost int
+
+	connectTimeout time.Duration
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
 }
 
 func NewClient(addresses []string, options ...ClientOptionsSetter) (*Client, error) {
-	client := &Client{}
+	client := &Client{
+
+		// Sensible defaults
+		minimumConnectionsPerHost: 1,
+		maximumConnectionsPerHost: 20,
+
+		connectTimeout: 5 * time.Second,
+		readTimeout:    5 * time.Second,
+		writeTimeout:   5 * time.Second,
+	}
 
 	for _, setter := range options {
 		if err := setter(client); err != nil {
@@ -94,7 +117,8 @@ func NewClient(addresses []string, options ...ClientOptionsSetter) (*Client, err
 		}
 	}
 
-	provider, err := newConnectionProvider(addresses)
+	provider, err := newConnectionProvider(addresses,
+		client.minimumConnectionsPerHost, client.maximumConnectionsPerHost, client.connectTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +175,7 @@ func (c *Client) SetWithExpiry(key string, value []byte, expiry time.Duration) e
 }
 
 // Add sets a key on the Memcached server only if the key did not have a value previously.
+// Returns ErrNotStored if the key was assigned a value.
 func (c *Client) Add(key string, value []byte) error {
 	if err := verifyKey(key); err != nil {
 		return err
@@ -183,6 +208,7 @@ func (c *Client) Add(key string, value []byte) error {
 
 // AddWithExpiry sets a key on the Memcached server which expires after the specified time,
 // only if the key did not have a value previously.
+// Returns ErrNotStored if the key was assigned a value.
 func (c *Client) AddWithExpiry(key string, value []byte, expiry time.Duration) error {
 	if err := verifyKey(key); err != nil {
 		return err
@@ -195,6 +221,63 @@ func (c *Client) AddWithExpiry(key string, value []byte, expiry time.Duration) e
 	defer connection.Close()
 
 	if err := writeStorage(connection, "add", key, expiry, value); err != nil {
+		return err
+	}
+
+	if _, err := readStorageResponse(connection); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Replace sets a key on the Memcached server only if the key already exists.
+// Returns ErrNotStored if the key did not have a value.
+func (c *Client) Replace(key string, value []byte) error {
+	if err := verifyKey(key); err != nil {
+		return err
+	}
+
+	connection, err := c.cp.Get()
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if err := writeStorage(connection, "replace", key, 0, value); err != nil {
+		return err
+	}
+
+	storageResultType, err := readStorageResponse(connection)
+	if err != nil {
+		return err
+	}
+
+	switch storageResultType {
+	case writeStorageResultTypeStored:
+		return nil
+	case writeStorageResultTypeNotStored:
+		return ErrNotStored
+	default:
+		return fmt.Errorf("Unexpected result type: %v", storageResultType)
+	}
+}
+
+// ReplaceWithExpiry sets a key on the Memcached server which expires after the specified time,
+// only if the key already exists.
+// Returns ErrNotStored if the key did not have a value.
+func (c *Client) ReplaceWithExpiry(key string, value []byte, expiry time.Duration) error {
+	if err := verifyKey(key); err != nil {
+		return err
+	}
+
+	connection, err := c.cp.Get()
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if err := writeStorage(connection, "replace", key, expiry, value); err != nil {
 		return err
 	}
 
@@ -255,6 +338,26 @@ func (c *Client) Get(key string) ([]byte, error) {
 
 	value, _ := values[key]
 	return value, nil
+}
+
+func (c *Client) MultiGet(keys []string) (map[string][]byte, error) {
+	for _, key := range keys {
+		if err := verifyKey(key); err != nil {
+			return nil, err
+		}
+	}
+
+	connection, err := c.cp.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+
+	if err := writeRetrieval(connection, "get", keys); err != nil {
+		return nil, err
+	}
+
+	return readRetrievalResponse(connection)
 }
 
 // As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L149
@@ -407,5 +510,9 @@ func readGenericResponse(conn net.Conn, expectedResponses [][]byte) ([]byte, err
 }
 
 func verifyKey(key string) error {
+	if len(key) > 250 {
+		return ErrKeyTooLong
+	}
+
 	return nil
 }
