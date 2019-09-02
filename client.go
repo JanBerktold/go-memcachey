@@ -45,6 +45,7 @@ func NewClient(addresses []string) (*Client, error) {
 	}, nil
 }
 
+// Set sets a key on the Memcached server, regardless of the previous state.
 func (c *Client) Set(key string, value []byte) error {
 	if err := verifyKey(key); err != nil {
 		return err
@@ -67,6 +68,7 @@ func (c *Client) Set(key string, value []byte) error {
 	return nil
 }
 
+// SetWithExpiry sets a key on the Memcached server which expires after a duration, regardless of the previous state.
 func (c *Client) SetWithExpiry(key string, value []byte, expiry time.Duration) error {
 	if err := verifyKey(key); err != nil {
 		return err
@@ -79,6 +81,53 @@ func (c *Client) SetWithExpiry(key string, value []byte, expiry time.Duration) e
 	defer connection.Close()
 
 	if err := writeStorage(connection, "set", key, expiry, value); err != nil {
+		return err
+	}
+
+	if _, err := readStorageResponse(connection); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Add sets a key on the Memcached server only if the key did not have a value previously.
+func (c *Client) Add(key string, value []byte) error {
+	if err := verifyKey(key); err != nil {
+		return err
+	}
+
+	connection, err := c.cp.Get()
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if err := writeStorage(connection, "add", key, 0, value); err != nil {
+		return err
+	}
+
+	if _, err := readStorageResponse(connection); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// AddWithExpiry sets a key on the Memcached server which expires after the specified time,
+// only if the key did not have a value previously.
+func (c *Client) AddWithExpiry(key string, value []byte, expiry time.Duration) error {
+	if err := verifyKey(key); err != nil {
+		return err
+	}
+
+	connection, err := c.cp.Get()
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	if err := writeStorage(connection, "add", key, expiry, value); err != nil {
 		return err
 	}
 
