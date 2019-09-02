@@ -15,7 +15,7 @@
 */
 
 // Package memcachey provides a modern, scalable client for the Memcached database.
-package memcachey // import "github.com/janberktold/go-memcache"
+package memcachey // import "github.com/janberktold/go-memcachey"
 
 import (
 	"bufio"
@@ -189,6 +189,50 @@ func (c *Client) AddWithExpiry(key string, value []byte, expiry time.Duration) e
 	}
 
 	return nil
+}
+
+// Delete marks a key as deleted in memcached.
+// Returns true if the key existed.
+func (c *Client) Delete(key string) (existed bool, err error) {
+	if err := verifyKey(key); err != nil {
+		return false, err
+	}
+
+	connection, err := c.cp.Get()
+	if err != nil {
+		return false, err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprintf(connection, "delete %s\r\n", key); err != nil {
+		return false, err
+	}
+
+	expectedResponses := [][]byte{resultNotFound, resultDeleted}
+	response, err := readGenericResponse(connection, expectedResponses)
+	if err != nil {
+		return false, err
+	}
+
+	// TODO: This could be a simpler check.
+	return bytes.Equal(response, resultDeleted), nil
+}
+
+func readGenericResponse(conn net.Conn, expectedResponses [][]byte) ([]byte, error) {
+	w := bufio.NewReader(conn)
+
+	line, err := w.ReadSlice('\n')
+	if err != nil {
+		return nil, err
+	}
+
+	for _, response := range expectedResponses {
+		if bytes.Equal(response, line) {
+			return response, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Unexpected response from memcached: %q", line)
 }
 
 // Get queries memcached for a single key and returns the value.

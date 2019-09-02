@@ -60,6 +60,40 @@ var testCases = []struct {
 			}
 		},
 	},
+	{
+		name: "DeleteNotSetKey",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			existed, err := client.Delete(key)
+			if err != nil {
+				t.Fatalf("Failed to delete key: %v", err)
+			}
+
+			if existed {
+				t.Fatal("Expected key to not exist but it did")
+			}
+		},
+	},
+	{
+		name: "SetThenDelete",
+		test: func(t *testing.T, client *Client) {
+			key := memcachedTestKey(t)
+
+			if err := client.Set(key, someByteValue); err != nil {
+				t.Fatalf("Failed to set key: %v", err)
+			}
+
+			existed, err := client.Delete(key)
+			if err != nil {
+				t.Fatalf("Failed to delete key: %v", err)
+			}
+
+			if !existed {
+				t.Fatal("Expected key to exist but it did not")
+			}
+		},
+	},
 }
 
 func TestAgainstMemcached(t *testing.T) {
