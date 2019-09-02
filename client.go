@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -54,7 +56,6 @@ func (c *Client) Set(key string, value []byte) error {
 	}
 	defer connection.Close()
 
-	fmt.Println(key)
 	if err := writeStorage(connection, "set", key, 0, value); err != nil {
 		return err
 	}
@@ -103,7 +104,13 @@ func (c *Client) Get(key string) ([]byte, error) {
 		return nil, err
 	}
 
-	return nil, nil
+	values, err := readRetrievalResponse(connection)
+	if err != nil {
+		return nil, err
+	}
+
+	value, _ := values[key]
+	return value, nil
 }
 
 // As per https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L149
@@ -176,8 +183,66 @@ func writeRetrieval(conn net.Conn, cmd string, keys []string) error {
 	return w.Flush()
 }
 
-func readRetrievalResponse(conn net.Conn) error {
-	return nil
+func readRetrievalResponse(conn net.Conn) (map[string][]byte, error) {
+	rd := bufio.NewReader(conn)
+	result := make(map[string][]byte, 10)
+
+	for {
+		line, err := rd.ReadSlice('\n')
+		if err != nil {
+			return nil, err
+		}
+
+		if bytes.Equal(line, resultEnd) {
+			return result, nil
+		}
+
+		isValueLine, key, _, valueLength, _ := readValueResponseLine(line)
+		if !isValueLine {
+			return nil, fmt.Errorf("Unexpected response from memcached: %v", key)
+		}
+
+		value := make([]byte, valueLength+2)
+		if _, err := rd.Read(value); err != nil {
+			return nil, err
+		}
+
+		result[key] = value[0:valueLength]
+	}
+}
+
+var valueLineMarker = []byte("VALUE ")
+
+func readValueResponseLine(line []byte) (isValue bool, key string, flags int, valueLength int, cas int) {
+	if len(line) <= len(valueLineMarker) || !bytes.Equal(line[0:len(valueLineMarker)], valueLineMarker) {
+		return false, "", 0, 0, 0
+	}
+
+	arguments := string(line[len(valueLineMarker):])
+	arguments = strings.TrimRight(arguments, "\r\n ")
+
+	parts := strings.Split(arguments, " ")
+
+	if len(parts) != 3 && len(parts) != 4 {
+		return false, "", 0, 0, 0
+	}
+
+	isValue = true
+	key = parts[0]
+	flags = 0
+	valueLength, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return false, "", 0, 0, 0
+	}
+
+	if len(parts) == 4 {
+		cas, err = strconv.Atoi(parts[3])
+		if err != nil {
+			return false, "", 0, 0, 0
+		}
+	}
+
+	return true, key, flags, valueLength, cas
 }
 
 func verifyKey(key string) error {
