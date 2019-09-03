@@ -415,6 +415,7 @@ func (c *Client) ConnectionStatisticsForAddress(address string) (map[string]*Con
 	return statistics, nil
 }
 
+// ItemStatistics contains information about item storage per slab class.
 type ItemStatistics struct {
 	// Number of items presently stored in this class. Expired items are not excluded.
 	Number uint64 `proto:"number"`
@@ -442,45 +443,71 @@ type ItemStatistics struct {
 
 	// OldestItem is the age of the oldest item in the lru.
 	OldestItem time.Duration `proto:"age"`
-}
 
-/*
-mem_requested          Number of bytes requested to be stored in this LRU[*]
-evicted                Number of times an item had to be evicted from the LRU
-                       before it expired.
-evicted_nonzero        Number of times an item which had an explicit expire
-                       time set had to be evicted from the LRU before it
-                       expired.
-evicted_time           Seconds since the last access for the most recent item
-                       evicted from this class. Use this to judge how
-                       recently active your evicted data is.
-outofmemory            Number of times the underlying slab class was unable to
-                       store a new item. This means you are running with -M or
-                       an eviction failed.
-tailrepairs            Number of times we self-healed a slab with a refcount
-                       leak. If this counter is increasing a lot, please
-                       report your situation to the developers.
-expired_unfetched      Number of expired items reclaimed from the LRU which
-                       were never touched after being set.
-evicted_unfetched      Number of valid items evicted from the LRU which were
-                       never touched after being set.
-evicted_active         Number of valid items evicted from the LRU which were
-                       recently touched but were evicted before being moved to
-                       the top of the LRU again.
-crawler_reclaimed      Number of items freed by the LRU Crawler.
-lrutail_reflocked      Number of items found to be refcount locked in the
-                       LRU tail.
-moves_to_cold          Number of items moved from HOT or WARM into COLD.
-moves_to_warm          Number of items moved from COLD to WARM.
-moves_within_lru       Number of times active items were bumped within
-                       HOT or WARM.
-direct_reclaims        Number of times worker threads had to directly pull LRU
-                       tails to find memory for a new item.
-hits_to_hot
-hits_to_warm
-hits_to_cold
-hits_to_temp           Number of get_hits to each sub-LRU.
-*/
+	// Number of bytes requested to be stored in this LRU[*]
+	MemoryRequested uint64 `proto:"mem_requested"`
+
+	// Number of times an item had to be evicted from the LRU before it expired.
+	EvictedItems uint64 `proto:"evicted"`
+
+	// Number of times an item which had an explicit expire time set had
+	// to be evicted from the LRU before it expired.
+	EvictedItemsWithExpireTime uint64 `proto:"evicted_nonzero"`
+
+	// Seconds since the last access for the most recent item
+	// evicted from this class. Use this to judge how
+	// recently active your evicted data is.
+	EvictedTime time.Duration `proto:"evicted_time"`
+
+	// Number of times the underlying slab class was unable to
+	// store a new item. This means you are running with -M or
+	// an eviction failed.
+	ItemsDeniedDueToOutOfMemory uint64 `proto:"outofmemory"`
+
+	//  Number of times we self-healed a slab with a refcount
+	// leak. If this counter is increasing a lot, please
+	// report your situation to the developers.
+	TailRepairs uint64 `proto:"tailrepairs"`
+
+	// Number of expired items reclaimed from the LRU which
+	// were never touched after being set.
+	ExpiredUnfetchedItems uint64 `proto:"expired_unfetched"`
+
+	// Number of valid items evicted from the LRU which were
+	// never touched after being set.
+	EvictedUnfetchedItems uint64 `proto:"evicted_unfetched"`
+
+	// Number of valid items evicted from the LRU which were
+	// recently touched but were evicted before being moved to
+	// the top of the LRU again.
+	EvictedActiveItems uint64 `proto:"evicted_active"`
+
+	// Number of items freed by the LRU Crawler.
+	CrawlerReclaimedItems uint64 `proto:"crawler_reclaimed"`
+
+	// Number of items found to be refcount locked in the LRU tail.
+	LRUTailReflockedItems uint64 `proto:"lrutail_reflocked"`
+
+	// Number of items moved from HOT or WARM into COLD.
+	ItemsMovedToCold uint64 `proto:"moves_to_cold"`
+
+	// Number of items moved from COLD to WARM.
+	ItemsMovedToWarm uint64 `proto:"moves_to_warm"`
+
+	// Number of times active items were bumped within HOT or WARM.
+	ItemsMovedWithinLRU uint64 `proto:"moves_within_lru"`
+
+	// Number of times worker threads had to directly pull LRU
+	// tails to find memory for a new item.
+	DirectReclaims uint64 `proto:"direct_reclaims"`
+
+	HotHits  uint64 `proto:"hits_to_hot"`
+	WarmHits uint64 `proto:"hits_to_warm"`
+	ColdHits uint64 `proto:"hits_to_cold"`
+
+	// Number of get_hits to each sub-LRU.
+	TemporaryHits uint64 `proto:"hits_to_temp"`
+}
 
 // ItemStatisticsForAddress returns information about item storage per slab class.
 func (c *Client) ItemStatisticsForAddress(address string) (map[string]*ItemStatistics, error) {

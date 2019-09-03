@@ -558,7 +558,9 @@ var testCases = []struct {
 				t.Fatalf("Expected no error, got %v", err)
 			}
 
-			spew.Dump(settings)
+			if len(settings) == 0 {
+				t.Fatal("Expected cache to have at least one slab")
+			}
 		},
 	},
 }
