@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// Statistics contains general-purpose statistics about a Memcached server.
 type Statistics struct {
 	// ProcessID is the process id of the server process
 	ProcessID uint32 `proto:"pid"`
@@ -50,33 +51,54 @@ type Statistics struct {
 
 	// ConnectionStructures is the number of connection structures allocated by the server
 	ConnectionStructures uint32 `proto:"connection_structures"`
+
+	// Number of misc fds used internally
+	ReservedFileDescriptors uint32 `proto:"reserved_fds"`
+
+	// Cumulative number of retrieval reqs
+	TotalGetCommands uint64 `proto:"cmd_get"`
+
+	// Cumulative number of storage reqs
+	TotalSetCommands uint64 `proto:"cmd_set"`
+
+	// Cumulative number of flush reqs
+	TotalFlushCommands uint64 `proto:"cmd_flush"`
+
+	// Cumulative number of touch reqs
+	TotalTotalCommands uint64 `proto:"cmd_touch"`
+
+	// Number of keys that have been requested and found present
+	GetHits uint64 `proto:"get_hits"`
+
+	// Number of items that have been requested and not found
+	GetMisses uint64 `proto:"get_misses"`
+
+	// Number of items that have been requested but had already expired
+	GetExpired uint64 `proto:"get_expired"`
+
+	// Number of items that have been requested but have been flushed via flush_all
+	GetFlushed uint64 `proto:"get_flushed"`
+
+	// Number of deletion reqs resulting in an item being removed
+	DeleteHits uint64 `proto:"delete_hits"`
+
+	// Number of deletions reqs for missing keys
+	DeleteMisses uint64 `proto:"delete_misses"`
+
+	// Number of incr reqs against missing keys
+	IncrementMisses uint64 `proto:"incr_misses"`
+
+	// Number of successful incr reqs
+	IncrementHits uint64 `proto:"incr_hits"`
+
+	// Number of decr reqs against missing keys
+	DecrementMisses uint64 `proto:"decr_misses"`
+
+	// Number of successful decr reqs
+	DecrementHits uint64 `proto:"decr_hits"`
 }
 
 /*
-| rusage_user           | 32u.32u | Accumulated user time for this process    |
-|                       |         | (seconds:microseconds)                    |
-| rusage_system         | 32u.32u | Accumulated system time for this process  |
-|                       |         | (seconds:microseconds)                    |
-| reserved_fds          | 32u     | Number of misc fds used internally        |
-| cmd_get               | 64u     | Cumulative number of retrieval reqs       |
-| cmd_set               | 64u     | Cumulative number of storage reqs         |
-| cmd_flush             | 64u     | Cumulative number of flush reqs           |
-| cmd_touch             | 64u     | Cumulative number of touch reqs           |
-| get_hits              | 64u     | Number of keys that have been requested   |
-|                       |         | and found present                         |
-| get_misses            | 64u     | Number of items that have been requested  |
-|                       |         | and not found                             |
-| get_expired           | 64u     | Number of items that have been requested  |
-|                       |         | but had already expired.                  |
-| get_flushed           | 64u     | Number of items that have been requested  |
-|                       |         | but have been flushed via flush_all       |
-| delete_misses         | 64u     | Number of deletions reqs for missing keys |
-| delete_hits           | 64u     | Number of deletion reqs resulting in      |
-|                       |         | an item being removed.                    |
-| incr_misses           | 64u     | Number of incr reqs against missing keys. |
-| incr_hits             | 64u     | Number of successful incr reqs.           |
-| decr_misses           | 64u     | Number of decr reqs against missing keys. |
-| decr_hits             | 64u     | Number of successful decr reqs.           |
 | cas_misses            | 64u     | Number of CAS reqs against missing keys.  |
 | cas_hits              | 64u     | Number of successful CAS reqs.            |
 | cas_badval            | 64u     | Number of CAS reqs for which a key was    |
@@ -157,8 +179,13 @@ type Statistics struct {
 | log_worker_written    | 64u     | Logs written by a worker, to be picked up |
 | log_watcher_skipped   | 64u     | Logs not sent to slow watchers.           |
 | log_watcher_sent      | 64u     | Logs written to watchers.                 |
-|-----------------------+---------+-------------------------------------------|
+| rusage_user           | 32u.32u | Accumulated user time for this process    |
+|                       |         | (seconds:microseconds)                    |
+| rusage_system         | 32u.32u | Accumulated system time for this process  |
+|                       |         | (seconds:microseconds)                    |
 */
+
+// StatisticsForAddress returns general-purpose statistics about the specified host.
 func (c *Client) StatisticsForAddress(address string) (*Statistics, error) {
 	connection, err := c.cp.ForAddress(address)
 	if err != nil {
@@ -337,25 +364,27 @@ func (c *Client) SettingsStatisticsForAddress(address string) (*SettingsStatisti
 	return settings, nil
 }
 
+// ConnectionStatistics contains information about a specific connection.
 type ConnectionStatistics struct {
 	// Address is the the address of the remote side. For listening
 	// sockets this is the listen address. Note that some socket types
 	// (such as UNIX-domain) don't have meaningful remote addresses.
 	Address string `proto:"addr"`
+
+	// The address of the server. This field is absent for listening sockets.
+	ListenAddress string `proto:"listen_addr"`
+
+	// The current state of the connection.
+	State string `proto:"state"`
+
+	// The number of seconds since the most recently issued command on the connection.
+	// This measures the time since the start of the command, so if "state" indicates a
+	// command is currently executing, this will be the number of seconds the current
+	// command has been running.
+	TimeSinceLastCommand time.Duration `proto:"secs_since_last_cmd"`
 }
 
-/*
-| listen_addr         | The address of the server. This field is absent      |
-|                     | for listening sockets.                               |
-| state               | The current state of the connection. See below.      |
-| secs_since_last_cmd | The number of seconds since the most recently        |
-|                     | issued command on the connection. This measures      |
-|                     | the time since the start of the command, so if       |
-|                     | "state" indicates a command is currently executing,  |
-|                     | this will be the number of seconds the current       |
-|                     | command has been running.                            |
-*/
-
+// ConnectionStatisticsForAddress returns per-connection statistics.
 func (c *Client) ConnectionStatisticsForAddress(address string) (map[string]*ConnectionStatistics, error) {
 	connection, err := c.cp.ForAddress(address)
 	if err != nil {

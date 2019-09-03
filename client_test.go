@@ -510,7 +510,21 @@ var testCases = []struct {
 				t.Fatalf("Expected no error, got %v", err)
 			}
 
-			spew.Dump(settings)
+			if settings.MaxConnections < 100 {
+				t.Fatalf("Expected a reasonable value for MaxConnections, got %v", settings.MaxConnections)
+			}
+
+			if settings.TCPBacklog < 100 {
+				t.Fatalf("Expected a reasonable value for TCPBacklog, got %v", settings.MaxConnections)
+			}
+
+			if settings.DropPriviliges {
+				t.Fatalf("Expected DropPrivileges to be false since we're running in Docker, was true.")
+			}
+
+			if settings.HashAlgorithm != "murmur3" {
+				t.Fatalf("Expected HashAlgorithm to be the default murmur3, got %v", settings.HashAlgorithm)
+			}
 		},
 	},
 	{
@@ -521,7 +535,19 @@ var testCases = []struct {
 				t.Fatalf("Expected no error, got %v", err)
 			}
 
-			spew.Dump(settings)
+			if len(settings) == 0 {
+				t.Fatalf("Expected at least one connection to exist")
+			}
+
+			for key, connection := range settings {
+				if len(connection.Address) == 0 {
+					t.Fatalf("Expected address field to be populated for %v connection", key)
+				}
+
+				if len(connection.State) == 0 {
+					t.Fatalf("Expected state field to be populated for %v connection", key)
+				}
+			}
 		},
 	},
 	{
