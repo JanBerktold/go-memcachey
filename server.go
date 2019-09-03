@@ -108,3 +108,26 @@ func (p *roundRobinConnectionProvider) ForEach() ([]net.Conn, error) {
 
 	return result, nil
 }
+
+type consistentHashConnnectionProvider struct {
+}
+
+func newConsistentHashConnectionProvider(addresses []string, minCons, maxCons int, connectTimeout time.Duration) (*consistentHashConnnectionProvider, error) {
+
+}
+
+func (p *consistentHashConnnectionProvider) ForKey(key string) (net.Conn, error) {
+	return nil, nil
+}
+
+func (p *consistentHashConnnectionProvider) ForKeys(keys []string) (map[net.Conn][]string, error) {
+	return nil, nil
+}
+
+func (p *consistentHashConnnectionProvider) ForAddress(address string) (net.Conn, error) {
+	return nil, nil
+}
+
+func (p *consistentHashConnnectionProvider) ForEach() ([]net.Conn, error) {
+	return nil, nil
+}

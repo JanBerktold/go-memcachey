@@ -68,6 +68,8 @@ var (
 	ErrCommandNotSupported = errors.New("command not supported on memcached host")
 )
 
+// ClientOptionsSetter provides the type for all methods which are able to
+// alter the Memcached client's behaviour.
 type ClientOptionsSetter func(client *Client) error
 
 // WithTimeouts allows specifying custom timeouts for the client.
@@ -99,9 +101,22 @@ func WithPoolLimitsPerHost(min, max int) ClientOptionsSetter {
 	}
 }
 
+// WithConsistentHashing enables consistent hashing when passed into NewClient()
+// over the default which is a round-robin strategy.
+func WithConsistentHashing() ClientOptionsSetter {
+	return func(client *Client) error {
+		client.connectionProviderCreator = func(addresses []string, client *Client) (connectionProvider, error) {
+			return newConsistentHashConnectionProvider(addresses, client.minimumConnectionsPerHost, client.maximumConnectionsPerHost, client.connectTimeout)
+		}
+
+		return nil
+	}
+}
+
 // Client is our interface over the logical connection to several Memcached hosts.
 type Client struct {
-	cp connectionProvider
+	cp                        connectionProvider
+	connectionProviderCreator func([]string, *Client) (connectionProvider, error)
 
 	minimumConnectionsPerHost int
 	maximumConnectionsPerHost int
@@ -115,8 +130,12 @@ type Client struct {
 // make sure to pass in the correct options.
 func NewClient(addresses []string, options ...ClientOptionsSetter) (*Client, error) {
 	client := &Client{
-
 		// Sensible defaults
+		connectionProviderCreator: func(addresses []string, client *Client) (connectionProvider, error) {
+			return newRoundRobinConnectionProvider(addresses,
+				client.minimumConnectionsPerHost, client.maximumConnectionsPerHost, client.connectTimeout)
+		},
+
 		minimumConnectionsPerHost: 1,
 		maximumConnectionsPerHost: 20,
 
@@ -131,8 +150,7 @@ func NewClient(addresses []string, options ...ClientOptionsSetter) (*Client, err
 		}
 	}
 
-	provider, err := newRoundRobinConnectionProvider(addresses,
-		client.minimumConnectionsPerHost, client.maximumConnectionsPerHost, client.connectTimeout)
+	provider, err := client.connectionProviderCreator(addresses, client)
 	if err != nil {
 		return nil, err
 	}
