@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/davecgh/go-spew/spew"
 )
 
 var (
@@ -325,8 +327,18 @@ var testCases = []struct {
 		name: "SetSlabsAutomoveModeForAddress",
 		test: func(t *testing.T, client *Client) {
 			for _, mode := range []SlabsAutomoveMode{SlabsAutomoveModeStandard, SlabsAutomoveModeAggressive, SlabsAutomoveModeStandby} {
+
 				if err := client.SetSlabsAutomoveModeForAddress(memcachedAddress, mode); err != nil {
 					t.Fatalf("Expected no error, got %v.", err)
+				}
+
+				statistics, err := client.SettingsStatisticsForAddress(memcachedAddress)
+				if err != nil {
+					t.Fatalf("Expected no error, got %v.", err)
+				}
+
+				if statistics.SlabAutomoverMode != mode {
+					t.Fatalf("Expected mode %v, but got %v.", mode, statistics.SlabAutomoverMode)
 				}
 			}
 		},
@@ -477,6 +489,50 @@ var testCases = []struct {
 			if returnedValue != expectedValue {
 				t.Fatalf("Expected %v, got %v.", expectedValue, returnedValue)
 			}
+		},
+	},
+	{
+		name: "StatisticsForAddress",
+		test: func(t *testing.T, client *Client) {
+			settings, err := client.StatisticsForAddress(memcachedAddress)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			spew.Dump(settings)
+		},
+	},
+	{
+		name: "SettingsStatisticsForAddress",
+		test: func(t *testing.T, client *Client) {
+			settings, err := client.SettingsStatisticsForAddress(memcachedAddress)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			spew.Dump(settings)
+		},
+	},
+	{
+		name: "ConnectionStatisticsForAddress",
+		test: func(t *testing.T, client *Client) {
+			settings, err := client.ConnectionStatisticsForAddress(memcachedAddress)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			spew.Dump(settings)
+		},
+	},
+	{
+		name: "ItemStatisticsForAddress",
+		test: func(t *testing.T, client *Client) {
+			settings, err := client.ItemStatisticsForAddress(memcachedAddress)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			spew.Dump(settings)
 		},
 	},
 }

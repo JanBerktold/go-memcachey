@@ -29,3 +29,7 @@ This client includes a testing suite which runs commands against a Memcached ser
 docker run --publish 127.0.0.1:11211:11211 memcached:1.5.17-alpine -v -v -v
 ```
 
+After which you can execute the tests any number of times:
+```
+go test -v
+```
