@@ -1,33 +1,13 @@
 version: 2
 jobs:
-  test:
-    branches:
-      ignore:
-        - master
+  build:
     docker:
       - image: circleci/golang:1.12.6
       # This is what we're running our integration tests against.
       - image: memcached:1.5.17-alpine
+
     steps:
       - checkout
 
-      - run: go get golang.org/x/tools/cmd/cover
-      - run: go get github.com/mattn/goveralls
       - run: go get -v -t -d ./...
-      - run: go test -v -covermode=count -cover ./...
-  push:
-    branches:
-      only:
-        - master
-    docker:
-      - image: circleci/golang:1.12.6
-      # This is what we're running our integration tests against.
-      - image: memcached:1.5.17-alpine
-    steps:
-      - checkout
-
-      - run: go get golang.org/x/tools/cmd/cover
-      - run: go get github.com/mattn/goveralls
-      - run: go get -v -t -d ./...
-      - run: go test -v -covermode=count -coverprofile=coverage.out ./...
-      - run: $HOME/gopath/bin/goveralls -coverprofile=coverage.out -service=circleci -repotoken $COVERALLS_TOKEN
+      - run: go test -v -cover ./...
