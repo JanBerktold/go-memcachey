@@ -181,12 +181,73 @@ func (c *Client) StatisticsForAddress(address string) (*Statistics, error) {
 	return settings, nil
 }
 
+// SettingsStatistics contains details of the settings of the running memcached
 type SettingsStatistics struct {
 	// MaxBytes represents the maximum number of bytes allowed in the cache.
 	MaxBytes uint64 `proto:"maxbytes"`
 
 	// MaxConnections is the maximum number of clients allowed
 	MaxConnections uint32 `proto:"maxconns"`
+
+	// TCPPort is the TCP port to listen on.
+	TCPPort uint32 `proto:"tcpport"`
+
+	// TCPPort is the UDP port to listen on.
+	UDPPort uint32 `proto:"udpport"`
+
+	// The Interface to listen on.
+	Interface string `proto:"inter"`
+
+	// Verbosity level
+	Verbosity uint32 `proto:"verbosity"`
+
+	// Oldest is the age of the oldest honored object
+	Oldest time.Duration `proto:"oldest"`
+
+	// When off, LRU evictions are disabled
+	LRUEvictionsEnabled bool `proto:"evictions"`
+
+	// Path to the domain socket (if any).
+	DomainSocket string `proto:"domain_socket"`
+
+	// umask for the creation of the domain socket
+	Umask uint32 `proto:"umask"`
+
+	// Chunk size growth factor
+	ChunkSizeGrowthFactor float64 `proto:"growth_factor"`
+
+	// Minimum space allocated for key+value+flags
+	InitialChunkSize uint32 `proto:"chunk_size"`
+
+	// Number of threads (including dispatch)
+	NumberOfThreads uint32 `proto:"num_threads"`
+
+	// Stats prefix separator character
+	StatsPrefixSeperatorCharacter string `proto:"stat_key_prefix"`
+
+	// If yes, stats detail is enabled
+	StatisticsDetailEnabled bool `proto:"detail_enabled"`
+
+	// Max num IO ops processed within an event
+	RequestsPerEvent uint32 `proto:"reqs_per_event"`
+
+	// When no, CAS is not enabled for this server
+	CASEnabled bool `proto:"cas_enabled"`
+
+	// TCP listen
+	TCPBacklog uint32 `proto:"tcp_backlog"`
+
+	// SASL auth requested and enabled
+	SASLAuthenticationEnabled bool `proto:"auth_enabled_sasl"`
+
+	// maximum item size
+	MaximumItemSize uint32 `proto:"item_size_max"`
+
+	// If fast disconnects are enabled
+	FastMaximumConnectionsEnabled bool `proto:"maxconns_fast"`
+
+	// Starting size multiplier for hash table
+	InitialHashPower uint32 `proto:"hashpower_init"`
 
 	// SlabReassignAllowed represents whether slab page reassignment is allowed
 	SlabReassignAllowed bool `proto:"slab_reassign"`
@@ -199,58 +260,61 @@ type SettingsStatistics struct {
 
 	// SlabAutomoverWindow is an internal algo tunable for automove
 	SlabAutomoverWindow uint32 `proto:"slab_automove_window"`
+
+	// MaximumSlabChunkSize is the maximum slab class size (avoid unless necessary)
+	MaximumSlabChunkSize uint32 `proto:"slab_chunk_max"`
+
+	// HashAlgorithm is the hash algorithm used for the hash table.
+	HashAlgorithm string `proto:"hash_algorithm"`
+
+	// LRUCrawlerEnabled represents whether the background thread running the LRU crawler is running.
+	LRUCrawlerEnabled bool `proto:"lru_crawler"`
+
+	// Microseconds to sleep between LRU crawls
+	LRUCrawlerSleep uint32 `proto:"lru_crawler_sleep"`
+
+	// Max items to crawl per slab per run
+	LRUCrawlerMaximumItems uint32 `proto:"lru_crawler_tocrawl"`
+
+	// Split LRU mode and background threads
+	LRUMaintainerThread bool `proto:"lru_maintainer_thread"`
+
+	// Pct of slab memory reserved for HOT LRU
+	HotLRUPct uint32 `proto:"hot_lru_pct"`
+
+	// Pct of slab memory reserved for WARM LRU
+	WarmLRUPct uint32 `proto:"warm_lru_pct"`
+
+	// Set idle age of HOT LRU to COLD age * this
+	MaximumHotFactor float64 `proto:"hot_max_factor"`
+
+	// Set idle age of WARM LRU to COLD age * this
+	MaximumWarmFactor float64 `proto:"warm_max_factor"`
+
+	// If yes, items < temporary_ttl use TEMP_LRU
+	TemporaryLRUEnabled bool `proto:"temp_lru"`
+
+	// Items with TTL < this are marked temporary
+	TemporaryTTL uint32 `proto:"temporary_ttl"`
+
+	// Drop connections that are idle this many seconds (0 disables)
+	ConnectionMaximumIdleTime time.Duration `proto:"idle_time"`
+
+	// Size of internal (not socket) write buffer per active watcher connected.
+	WatcherWriteBufferSize uint32 `proto:"watcher_logbuf_size"`
+
+	// Size of internal per-worker-thread buffer which the background thread reads from.
+	WorkerWriteBufferSize uint32 `proto:"worker_logbuf_size"`
+
+	// If yes, a "stats sizes" histogram is being dynamically tracked.
+	TrackingSizesEnabled bool `proto:"track_sizes"`
+
+	// If yes, and available, drop unused syscalls (see seccomp on Linux, pledge on OpenBSD)
+	DropPriviliges bool `proto:"drop_privileges"`
 }
 
-/*
-| tcpport           | 32       | TCP listen port.                             |
-| udpport           | 32       | UDP listen port.                             |
-| inter             | string   | Listen interface.                            |
-| verbosity         | 32       | 0 = none, 1 = some, 2 = lots                 |
-| oldest            | 32u      | Age of the oldest honored object.            |
-| evictions         | on/off   | When off, LRU evictions are disabled.        |
-| domain_socket     | string   | Path to the domain socket (if any).          |
-| umask             | 32 (oct) | umask for the creation of the domain socket. |
-| growth_factor     | float    | Chunk size growth factor.                    |
-| chunk_size        | 32       | Minimum space allocated for key+value+flags. |
-| num_threads       | 32       | Number of threads (including dispatch).      |
-| stat_key_prefix   | char     | Stats prefix separator character.            |
-| detail_enabled    | bool     | If yes, stats detail is enabled.             |
-| reqs_per_event    | 32       | Max num IO ops processed within an event.    |
-| cas_enabled       | bool     | When no, CAS is not enabled for this server. |
-| tcp_backlog       | 32       | TCP listen backlog.                          |
-| auth_enabled_sasl | yes/no   | SASL auth requested and enabled.             |
-| item_size_max     | size_t   | maximum item size                            |
-| maxconns_fast     | bool     | If fast disconnects are enabled              |
-| hashpower_init    | 32       | Starting size multiplier for hash table      |
-
-
-| slab_chunk_max    | 32       | Max slab class size (avoid unless necessary) |
-| hash_algorithm    | char     | Hash table algorithm in use                  |
-| lru_crawler       | bool     | Whether the LRU crawler is enabled           |
-| lru_crawler_sleep | 32       | Microseconds to sleep between LRU crawls     |
-| lru_crawler_tocrawl                                                         |
-|                   | 32u      | Max items to crawl per slab per run          |
-| lru_maintainer_thread                                                       |
-|                   | bool     | Split LRU mode and background threads        |
-| hot_lru_pct       | 32       | Pct of slab memory reserved for HOT LRU      |
-| warm_lru_pct      | 32       | Pct of slab memory reserved for WARM LRU     |
-| hot_max_factor    | float    | Set idle age of HOT LRU to COLD age * this   |
-| warm_max_factor   | float    | Set idle age of WARM LRU to COLD age * this  |
-| temp_lru          | bool     | If yes, items < temporary_ttl use TEMP_LRU   |
-| temporary_ttl     | 32u      | Items with TTL < this are marked  temporary  |
-| idle_time         | 0        | Drop connections that are idle this many     |
-|                   |          | seconds (0 disables)                         |
-| watcher_logbuf_size                                                         |
-|                   | 32u      | Size of internal (not socket) write buffer   |
-|                   |          | per active watcher connected.                |
-| worker_logbuf_size| 32u      | Size of internal per-worker-thread buffer    |
-|                   |          | which the background thread reads from.      |
-| track_sizes       | bool     | If yes, a "stats sizes" histogram is being   |
-|                   |          | dynamically tracked.                         |
-| drop_privileges   | bool     | If yes, and available, drop unused syscalls  |
-|                   |          | (see seccomp on Linux, pledge on OpenBSD)    |
-*/
-
+// SettingsStatisticsForAddress returns details of the settings of the running memcached.
+// This is primarily made up of the results of processing commandline options.
 func (c *Client) SettingsStatisticsForAddress(address string) (*SettingsStatistics, error) {
 	connection, err := c.cp.ForAddress(address)
 	if err != nil {
