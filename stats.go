@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// Statistics contains general-purpose statistics about a Memcached server.
 type Statistics struct {
 	// ProcessID is the process id of the server process
 	ProcessID uint32 `proto:"pid"`
@@ -50,33 +51,54 @@ type Statistics struct {
 
 	// ConnectionStructures is the number of connection structures allocated by the server
 	ConnectionStructures uint32 `proto:"connection_structures"`
+
+	// Number of misc fds used internally
+	ReservedFileDescriptors uint32 `proto:"reserved_fds"`
+
+	// Cumulative number of retrieval reqs
+	TotalGetCommands uint64 `proto:"cmd_get"`
+
+	// Cumulative number of storage reqs
+	TotalSetCommands uint64 `proto:"cmd_set"`
+
+	// Cumulative number of flush reqs
+	TotalFlushCommands uint64 `proto:"cmd_flush"`
+
+	// Cumulative number of touch reqs
+	TotalTotalCommands uint64 `proto:"cmd_touch"`
+
+	// Number of keys that have been requested and found present
+	GetHits uint64 `proto:"get_hits"`
+
+	// Number of items that have been requested and not found
+	GetMisses uint64 `proto:"get_misses"`
+
+	// Number of items that have been requested but had already expired
+	GetExpired uint64 `proto:"get_expired"`
+
+	// Number of items that have been requested but have been flushed via flush_all
+	GetFlushed uint64 `proto:"get_flushed"`
+
+	// Number of deletion reqs resulting in an item being removed
+	DeleteHits uint64 `proto:"delete_hits"`
+
+	// Number of deletions reqs for missing keys
+	DeleteMisses uint64 `proto:"delete_misses"`
+
+	// Number of incr reqs against missing keys
+	IncrementMisses uint64 `proto:"incr_misses"`
+
+	// Number of successful incr reqs
+	IncrementHits uint64 `proto:"incr_hits"`
+
+	// Number of decr reqs against missing keys
+	DecrementMisses uint64 `proto:"decr_misses"`
+
+	// Number of successful decr reqs
+	DecrementHits uint64 `proto:"decr_hits"`
 }
 
 /*
-| rusage_user           | 32u.32u | Accumulated user time for this process    |
-|                       |         | (seconds:microseconds)                    |
-| rusage_system         | 32u.32u | Accumulated system time for this process  |
-|                       |         | (seconds:microseconds)                    |
-| reserved_fds          | 32u     | Number of misc fds used internally        |
-| cmd_get               | 64u     | Cumulative number of retrieval reqs       |
-| cmd_set               | 64u     | Cumulative number of storage reqs         |
-| cmd_flush             | 64u     | Cumulative number of flush reqs           |
-| cmd_touch             | 64u     | Cumulative number of touch reqs           |
-| get_hits              | 64u     | Number of keys that have been requested   |
-|                       |         | and found present                         |
-| get_misses            | 64u     | Number of items that have been requested  |
-|                       |         | and not found                             |
-| get_expired           | 64u     | Number of items that have been requested  |
-|                       |         | but had already expired.                  |
-| get_flushed           | 64u     | Number of items that have been requested  |
-|                       |         | but have been flushed via flush_all       |
-| delete_misses         | 64u     | Number of deletions reqs for missing keys |
-| delete_hits           | 64u     | Number of deletion reqs resulting in      |
-|                       |         | an item being removed.                    |
-| incr_misses           | 64u     | Number of incr reqs against missing keys. |
-| incr_hits             | 64u     | Number of successful incr reqs.           |
-| decr_misses           | 64u     | Number of decr reqs against missing keys. |
-| decr_hits             | 64u     | Number of successful decr reqs.           |
 | cas_misses            | 64u     | Number of CAS reqs against missing keys.  |
 | cas_hits              | 64u     | Number of successful CAS reqs.            |
 | cas_badval            | 64u     | Number of CAS reqs for which a key was    |
@@ -157,8 +179,13 @@ type Statistics struct {
 | log_worker_written    | 64u     | Logs written by a worker, to be picked up |
 | log_watcher_skipped   | 64u     | Logs not sent to slow watchers.           |
 | log_watcher_sent      | 64u     | Logs written to watchers.                 |
-|-----------------------+---------+-------------------------------------------|
+| rusage_user           | 32u.32u | Accumulated user time for this process    |
+|                       |         | (seconds:microseconds)                    |
+| rusage_system         | 32u.32u | Accumulated system time for this process  |
+|                       |         | (seconds:microseconds)                    |
 */
+
+// StatisticsForAddress returns general-purpose statistics about the specified host.
 func (c *Client) StatisticsForAddress(address string) (*Statistics, error) {
 	connection, err := c.cp.ForAddress(address)
 	if err != nil {
@@ -181,12 +208,73 @@ func (c *Client) StatisticsForAddress(address string) (*Statistics, error) {
 	return settings, nil
 }
 
+// SettingsStatistics contains details of the settings of the running memcached
 type SettingsStatistics struct {
 	// MaxBytes represents the maximum number of bytes allowed in the cache.
 	MaxBytes uint64 `proto:"maxbytes"`
 
 	// MaxConnections is the maximum number of clients allowed
 	MaxConnections uint32 `proto:"maxconns"`
+
+	// TCPPort is the TCP port to listen on.
+	TCPPort uint32 `proto:"tcpport"`
+
+	// TCPPort is the UDP port to listen on.
+	UDPPort uint32 `proto:"udpport"`
+
+	// The Interface to listen on.
+	Interface string `proto:"inter"`
+
+	// Verbosity level
+	Verbosity uint32 `proto:"verbosity"`
+
+	// Oldest is the age of the oldest honored object
+	Oldest time.Duration `proto:"oldest"`
+
+	// When off, LRU evictions are disabled
+	LRUEvictionsEnabled bool `proto:"evictions"`
+
+	// Path to the domain socket (if any).
+	DomainSocket string `proto:"domain_socket"`
+
+	// umask for the creation of the domain socket
+	Umask uint32 `proto:"umask"`
+
+	// Chunk size growth factor
+	ChunkSizeGrowthFactor float64 `proto:"growth_factor"`
+
+	// Minimum space allocated for key+value+flags
+	InitialChunkSize uint32 `proto:"chunk_size"`
+
+	// Number of threads (including dispatch)
+	NumberOfThreads uint32 `proto:"num_threads"`
+
+	// Stats prefix separator character
+	StatsPrefixSeperatorCharacter string `proto:"stat_key_prefix"`
+
+	// If yes, stats detail is enabled
+	StatisticsDetailEnabled bool `proto:"detail_enabled"`
+
+	// Max num IO ops processed within an event
+	RequestsPerEvent uint32 `proto:"reqs_per_event"`
+
+	// When no, CAS is not enabled for this server
+	CASEnabled bool `proto:"cas_enabled"`
+
+	// TCP listen
+	TCPBacklog uint32 `proto:"tcp_backlog"`
+
+	// SASL auth requested and enabled
+	SASLAuthenticationEnabled bool `proto:"auth_enabled_sasl"`
+
+	// maximum item size
+	MaximumItemSize uint32 `proto:"item_size_max"`
+
+	// If fast disconnects are enabled
+	FastMaximumConnectionsEnabled bool `proto:"maxconns_fast"`
+
+	// Starting size multiplier for hash table
+	InitialHashPower uint32 `proto:"hashpower_init"`
 
 	// SlabReassignAllowed represents whether slab page reassignment is allowed
 	SlabReassignAllowed bool `proto:"slab_reassign"`
@@ -199,58 +287,61 @@ type SettingsStatistics struct {
 
 	// SlabAutomoverWindow is an internal algo tunable for automove
 	SlabAutomoverWindow uint32 `proto:"slab_automove_window"`
+
+	// MaximumSlabChunkSize is the maximum slab class size (avoid unless necessary)
+	MaximumSlabChunkSize uint32 `proto:"slab_chunk_max"`
+
+	// HashAlgorithm is the hash algorithm used for the hash table.
+	HashAlgorithm string `proto:"hash_algorithm"`
+
+	// LRUCrawlerEnabled represents whether the background thread running the LRU crawler is running.
+	LRUCrawlerEnabled bool `proto:"lru_crawler"`
+
+	// Microseconds to sleep between LRU crawls
+	LRUCrawlerSleep uint32 `proto:"lru_crawler_sleep"`
+
+	// Max items to crawl per slab per run
+	LRUCrawlerMaximumItems uint32 `proto:"lru_crawler_tocrawl"`
+
+	// Split LRU mode and background threads
+	LRUMaintainerThread bool `proto:"lru_maintainer_thread"`
+
+	// Pct of slab memory reserved for HOT LRU
+	HotLRUPct uint32 `proto:"hot_lru_pct"`
+
+	// Pct of slab memory reserved for WARM LRU
+	WarmLRUPct uint32 `proto:"warm_lru_pct"`
+
+	// Set idle age of HOT LRU to COLD age * this
+	MaximumHotFactor float64 `proto:"hot_max_factor"`
+
+	// Set idle age of WARM LRU to COLD age * this
+	MaximumWarmFactor float64 `proto:"warm_max_factor"`
+
+	// If yes, items < temporary_ttl use TEMP_LRU
+	TemporaryLRUEnabled bool `proto:"temp_lru"`
+
+	// Items with TTL < this are marked temporary
+	TemporaryTTL uint32 `proto:"temporary_ttl"`
+
+	// Drop connections that are idle this many seconds (0 disables)
+	ConnectionMaximumIdleTime time.Duration `proto:"idle_time"`
+
+	// Size of internal (not socket) write buffer per active watcher connected.
+	WatcherWriteBufferSize uint32 `proto:"watcher_logbuf_size"`
+
+	// Size of internal per-worker-thread buffer which the background thread reads from.
+	WorkerWriteBufferSize uint32 `proto:"worker_logbuf_size"`
+
+	// If yes, a "stats sizes" histogram is being dynamically tracked.
+	TrackingSizesEnabled bool `proto:"track_sizes"`
+
+	// If yes, and available, drop unused syscalls (see seccomp on Linux, pledge on OpenBSD)
+	DropPriviliges bool `proto:"drop_privileges"`
 }
 
-/*
-| tcpport           | 32       | TCP listen port.                             |
-| udpport           | 32       | UDP listen port.                             |
-| inter             | string   | Listen interface.                            |
-| verbosity         | 32       | 0 = none, 1 = some, 2 = lots                 |
-| oldest            | 32u      | Age of the oldest honored object.            |
-| evictions         | on/off   | When off, LRU evictions are disabled.        |
-| domain_socket     | string   | Path to the domain socket (if any).          |
-| umask             | 32 (oct) | umask for the creation of the domain socket. |
-| growth_factor     | float    | Chunk size growth factor.                    |
-| chunk_size        | 32       | Minimum space allocated for key+value+flags. |
-| num_threads       | 32       | Number of threads (including dispatch).      |
-| stat_key_prefix   | char     | Stats prefix separator character.            |
-| detail_enabled    | bool     | If yes, stats detail is enabled.             |
-| reqs_per_event    | 32       | Max num IO ops processed within an event.    |
-| cas_enabled       | bool     | When no, CAS is not enabled for this server. |
-| tcp_backlog       | 32       | TCP listen backlog.                          |
-| auth_enabled_sasl | yes/no   | SASL auth requested and enabled.             |
-| item_size_max     | size_t   | maximum item size                            |
-| maxconns_fast     | bool     | If fast disconnects are enabled              |
-| hashpower_init    | 32       | Starting size multiplier for hash table      |
-
-
-| slab_chunk_max    | 32       | Max slab class size (avoid unless necessary) |
-| hash_algorithm    | char     | Hash table algorithm in use                  |
-| lru_crawler       | bool     | Whether the LRU crawler is enabled           |
-| lru_crawler_sleep | 32       | Microseconds to sleep between LRU crawls     |
-| lru_crawler_tocrawl                                                         |
-|                   | 32u      | Max items to crawl per slab per run          |
-| lru_maintainer_thread                                                       |
-|                   | bool     | Split LRU mode and background threads        |
-| hot_lru_pct       | 32       | Pct of slab memory reserved for HOT LRU      |
-| warm_lru_pct      | 32       | Pct of slab memory reserved for WARM LRU     |
-| hot_max_factor    | float    | Set idle age of HOT LRU to COLD age * this   |
-| warm_max_factor   | float    | Set idle age of WARM LRU to COLD age * this  |
-| temp_lru          | bool     | If yes, items < temporary_ttl use TEMP_LRU   |
-| temporary_ttl     | 32u      | Items with TTL < this are marked  temporary  |
-| idle_time         | 0        | Drop connections that are idle this many     |
-|                   |          | seconds (0 disables)                         |
-| watcher_logbuf_size                                                         |
-|                   | 32u      | Size of internal (not socket) write buffer   |
-|                   |          | per active watcher connected.                |
-| worker_logbuf_size| 32u      | Size of internal per-worker-thread buffer    |
-|                   |          | which the background thread reads from.      |
-| track_sizes       | bool     | If yes, a "stats sizes" histogram is being   |
-|                   |          | dynamically tracked.                         |
-| drop_privileges   | bool     | If yes, and available, drop unused syscalls  |
-|                   |          | (see seccomp on Linux, pledge on OpenBSD)    |
-*/
-
+// SettingsStatisticsForAddress returns details of the settings of the running memcached.
+// This is primarily made up of the results of processing commandline options.
 func (c *Client) SettingsStatisticsForAddress(address string) (*SettingsStatistics, error) {
 	connection, err := c.cp.ForAddress(address)
 	if err != nil {
@@ -273,25 +364,27 @@ func (c *Client) SettingsStatisticsForAddress(address string) (*SettingsStatisti
 	return settings, nil
 }
 
+// ConnectionStatistics contains information about a specific connection.
 type ConnectionStatistics struct {
 	// Address is the the address of the remote side. For listening
 	// sockets this is the listen address. Note that some socket types
 	// (such as UNIX-domain) don't have meaningful remote addresses.
 	Address string `proto:"addr"`
+
+	// The address of the server. This field is absent for listening sockets.
+	ListenAddress string `proto:"listen_addr"`
+
+	// The current state of the connection.
+	State string `proto:"state"`
+
+	// The number of seconds since the most recently issued command on the connection.
+	// This measures the time since the start of the command, so if "state" indicates a
+	// command is currently executing, this will be the number of seconds the current
+	// command has been running.
+	TimeSinceLastCommand time.Duration `proto:"secs_since_last_cmd"`
 }
 
-/*
-| listen_addr         | The address of the server. This field is absent      |
-|                     | for listening sockets.                               |
-| state               | The current state of the connection. See below.      |
-| secs_since_last_cmd | The number of seconds since the most recently        |
-|                     | issued command on the connection. This measures      |
-|                     | the time since the start of the command, so if       |
-|                     | "state" indicates a command is currently executing,  |
-|                     | this will be the number of seconds the current       |
-|                     | command has been running.                            |
-*/
-
+// ConnectionStatisticsForAddress returns per-connection statistics.
 func (c *Client) ConnectionStatisticsForAddress(address string) (map[string]*ConnectionStatistics, error) {
 	connection, err := c.cp.ForAddress(address)
 	if err != nil {
@@ -322,6 +415,7 @@ func (c *Client) ConnectionStatisticsForAddress(address string) (map[string]*Con
 	return statistics, nil
 }
 
+// ItemStatistics contains information about item storage per slab class.
 type ItemStatistics struct {
 	// Number of items presently stored in this class. Expired items are not excluded.
 	Number uint64 `proto:"number"`
@@ -349,45 +443,71 @@ type ItemStatistics struct {
 
 	// OldestItem is the age of the oldest item in the lru.
 	OldestItem time.Duration `proto:"age"`
-}
 
-/*
-mem_requested          Number of bytes requested to be stored in this LRU[*]
-evicted                Number of times an item had to be evicted from the LRU
-                       before it expired.
-evicted_nonzero        Number of times an item which had an explicit expire
-                       time set had to be evicted from the LRU before it
-                       expired.
-evicted_time           Seconds since the last access for the most recent item
-                       evicted from this class. Use this to judge how
-                       recently active your evicted data is.
-outofmemory            Number of times the underlying slab class was unable to
-                       store a new item. This means you are running with -M or
-                       an eviction failed.
-tailrepairs            Number of times we self-healed a slab with a refcount
-                       leak. If this counter is increasing a lot, please
-                       report your situation to the developers.
-expired_unfetched      Number of expired items reclaimed from the LRU which
-                       were never touched after being set.
-evicted_unfetched      Number of valid items evicted from the LRU which were
-                       never touched after being set.
-evicted_active         Number of valid items evicted from the LRU which were
-                       recently touched but were evicted before being moved to
-                       the top of the LRU again.
-crawler_reclaimed      Number of items freed by the LRU Crawler.
-lrutail_reflocked      Number of items found to be refcount locked in the
-                       LRU tail.
-moves_to_cold          Number of items moved from HOT or WARM into COLD.
-moves_to_warm          Number of items moved from COLD to WARM.
-moves_within_lru       Number of times active items were bumped within
-                       HOT or WARM.
-direct_reclaims        Number of times worker threads had to directly pull LRU
-                       tails to find memory for a new item.
-hits_to_hot
-hits_to_warm
-hits_to_cold
-hits_to_temp           Number of get_hits to each sub-LRU.
-*/
+	// Number of bytes requested to be stored in this LRU[*]
+	MemoryRequested uint64 `proto:"mem_requested"`
+
+	// Number of times an item had to be evicted from the LRU before it expired.
+	EvictedItems uint64 `proto:"evicted"`
+
+	// Number of times an item which had an explicit expire time set had
+	// to be evicted from the LRU before it expired.
+	EvictedItemsWithExpireTime uint64 `proto:"evicted_nonzero"`
+
+	// Seconds since the last access for the most recent item
+	// evicted from this class. Use this to judge how
+	// recently active your evicted data is.
+	EvictedTime time.Duration `proto:"evicted_time"`
+
+	// Number of times the underlying slab class was unable to
+	// store a new item. This means you are running with -M or
+	// an eviction failed.
+	ItemsDeniedDueToOutOfMemory uint64 `proto:"outofmemory"`
+
+	//  Number of times we self-healed a slab with a refcount
+	// leak. If this counter is increasing a lot, please
+	// report your situation to the developers.
+	TailRepairs uint64 `proto:"tailrepairs"`
+
+	// Number of expired items reclaimed from the LRU which
+	// were never touched after being set.
+	ExpiredUnfetchedItems uint64 `proto:"expired_unfetched"`
+
+	// Number of valid items evicted from the LRU which were
+	// never touched after being set.
+	EvictedUnfetchedItems uint64 `proto:"evicted_unfetched"`
+
+	// Number of valid items evicted from the LRU which were
+	// recently touched but were evicted before being moved to
+	// the top of the LRU again.
+	EvictedActiveItems uint64 `proto:"evicted_active"`
+
+	// Number of items freed by the LRU Crawler.
+	CrawlerReclaimedItems uint64 `proto:"crawler_reclaimed"`
+
+	// Number of items found to be refcount locked in the LRU tail.
+	LRUTailReflockedItems uint64 `proto:"lrutail_reflocked"`
+
+	// Number of items moved from HOT or WARM into COLD.
+	ItemsMovedToCold uint64 `proto:"moves_to_cold"`
+
+	// Number of items moved from COLD to WARM.
+	ItemsMovedToWarm uint64 `proto:"moves_to_warm"`
+
+	// Number of times active items were bumped within HOT or WARM.
+	ItemsMovedWithinLRU uint64 `proto:"moves_within_lru"`
+
+	// Number of times worker threads had to directly pull LRU
+	// tails to find memory for a new item.
+	DirectReclaims uint64 `proto:"direct_reclaims"`
+
+	HotHits  uint64 `proto:"hits_to_hot"`
+	WarmHits uint64 `proto:"hits_to_warm"`
+	ColdHits uint64 `proto:"hits_to_cold"`
+
+	// Number of get_hits to each sub-LRU.
+	TemporaryHits uint64 `proto:"hits_to_temp"`
+}
 
 // ItemStatisticsForAddress returns information about item storage per slab class.
 func (c *Client) ItemStatisticsForAddress(address string) (map[string]*ItemStatistics, error) {
