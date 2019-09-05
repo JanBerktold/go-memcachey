@@ -96,20 +96,30 @@ type Statistics struct {
 
 	// Number of successful decr reqs
 	DecrementHits uint64 `proto:"decr_hits"`
+
+	// Number of CAS reqs against missing keys
+	CheckAndSetMisses uint64 `proto:"cas_misses"`
+
+	// Number of successful CAS reqs
+	CheckAndSetHits uint64 `proto:"cas_hits`
+
+	// Number of CAS reqs for which a key was found, but the CAS value did not match
+	CheckAndSetBadValue uint64 `proto:"cas_badval"`
+
+	// Number of keys that have been touched with a new expiration time
+	TouchHits uint64 `proto:"touch_hits"`
+
+	// Number of items that have been touched and not found
+	TouchMisses uint64 `proto:"touch_misses"`
+
+	// Number of authentication commands handled, success or failure
+	AuthenticationCommands uint64 `proto:"auth_cmds"`
+
+	// Number of failed authentications
+	AuthenticationErrors uint64 `proto:"auth_errors"`
 }
 
 /*
-| cas_misses            | 64u     | Number of CAS reqs against missing keys.  |
-| cas_hits              | 64u     | Number of successful CAS reqs.            |
-| cas_badval            | 64u     | Number of CAS reqs for which a key was    |
-|                       |         | found, but the CAS value did not match.   |
-| touch_hits            | 64u     | Number of keys that have been touched     |
-|                       |         | with a new expiration time                |
-| touch_misses          | 64u     | Number of items that have been touched    |
-|                       |         | and not found                             |
-| auth_cmds             | 64u     | Number of authentication commands         |
-|                       |         | handled, success or failure.              |
-| auth_errors           | 64u     | Number of failed authentications.         |
 | idle_kicks            | 64u     | Number of connections closed due to       |
 |                       |         | reaching their idle timeout.              |
 | evictions             | 64u     | Number of valid items removed from cache  |
@@ -259,7 +269,7 @@ type SettingsStatistics struct {
 	RequestsPerEvent uint32 `proto:"reqs_per_event"`
 
 	// When no, CAS is not enabled for this server
-	CASEnabled bool `proto:"cas_enabled"`
+	CheckAndSetEnabled bool `proto:"cas_enabled"`
 
 	// TCP listen
 	TCPBacklog uint32 `proto:"tcp_backlog"`
@@ -542,33 +552,104 @@ func (c *Client) ItemStatisticsForAddress(address string) (map[string]*ItemStati
 	return statistics, nil
 }
 
-//type SlabStatistics struct {
-//}
+// PerSlabStatistics contains about statistics about a single slab.
+type PerSlabStatistics struct {
+	// The amount of space each chunk uses. One item will use one
+	// chunk of the appropriate size
+	ChunkSize uint64 `proto:"chunk_size"`
 
-/*
-| chunk_size      | The amount of space each chunk uses. One item will use   |
-|                 | one chunk of the appropriate size.                       |
-| chunks_per_page | How many chunks exist within one page. A page by         |
-|                 | default is less than or equal to one megabyte in size.   |
-|                 | Slabs are allocated by page, then broken into chunks.    |
-| total_pages     | Total number of pages allocated to the slab class.       |
-| total_chunks    | Total number of chunks allocated to the slab class.      |
-| get_hits        | Total number of get requests serviced by this class.     |
-| cmd_set         | Total number of set requests storing data in this class. |
-| delete_hits     | Total number of successful deletes from this class.      |
-| incr_hits       | Total number of incrs modifying this class.              |
-| decr_hits       | Total number of decrs modifying this class.              |
-| cas_hits        | Total number of CAS commands modifying this class.       |
-| cas_badval      | Total number of CAS commands that failed to modify a     |
-|                 | value due to a bad CAS id.                               |
-| touch_hits      | Total number of touches serviced by this class.          |
-| used_chunks     | How many chunks have been allocated to items.            |
-| free_chunks     | Chunks not yet allocated to items, or freed via delete.  |
-| free_chunks_end | Number of free chunks at the end of the last allocated   |
-|                 | page.                                                    |
-| active_slabs    | Total number of slab classes allocated.                  |
-| total_malloced  | Total amount of memory allocated to slab pages.          |
-*/
+	// How many chunks exist within one page. A page by default
+	// is less than or equal to one megabyte in size
+	ChunksPerPage uint64 `proto:"chunks_per_page"`
+
+	// Total number of pages allocated to the slab class
+	TotalPages uint64 `proto:"total_pages"`
+
+	// Total number of chunks allocated to the slab class
+	TotalChunks uint64 `proto:"total_chunks"`
+
+	// Total number of get requests serviced by this class
+	GetHits uint64 `proto:"get_hits"`
+
+	// Total number of set requests storing data in this class
+	SetCommands uint64 `proto:"cmd_set"`
+
+	// Total number of successful deletes from this class
+	DeleteHits uint64 `proto:"delete_hits"`
+
+	// Total number of incrs modifying this class
+	IncrementHits uint64 `proto:"incr_hits"`
+
+	// Total number of decrs modifying this class
+	DecrementHits uint64 `proto:"decr_hits"`
+
+	// Total number of CAS commands modifying this class
+	CheckAndSetHits uint64 `proto:"cas_hits"`
+
+	// Total number of CAS commands that failed to modify a value due to a bad CAS id.
+	CheckAndSetBadValue uint64 `proto:"cas_badval"`
+
+	// Total number of touches serviced by this class
+	TouchHits uint64 `proto:"touch_hits"`
+
+	// How many chunks have been allocated to items
+	UsedChunks uint64 `proto:"used_chunks"`
+
+	// Chunks not yet allocated to items, or freed via delete
+	FreeChunks uint64 `proto:"free_chunks"`
+
+	// Number of free chunks at the end of the last allocated page
+	FreeChecksEnd uint64 `proto:"free_chunks_end"`
+}
+
+// SlabStatistics contains statistics about the server's slabs.
+type SlabStatistics struct {
+	// Total number of slab classes allocated
+	ActiveSlabs uint64 `proto:"active_slabs"`
+
+	// Total amount of memory allocated to slab pages
+	TotalMalloced uint64 `proto:"total_malloced"`
+
+	// PerSlabStatistics contains detailed statistics on a per-chunk basis.
+	PerSlabStatistics map[uint]*PerSlabStatistics
+}
+
+// SlabsStatisticsForAddress returns per-slab statistics for the specified memcached server.
+func (c *Client) SlabsStatisticsForAddress(address string) (*SlabStatistics, error) {
+	connection, err := c.cp.ForAddress(address)
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+
+	if _, err := fmt.Fprint(connection, "stats slabs\r\n"); err != nil {
+		return nil, err
+	}
+
+	statistics := &SlabStatistics{
+		PerSlabStatistics: map[uint]*PerSlabStatistics{},
+	}
+
+	if err := parseSettingsResponse(connection, func(prefix string) interface{} {
+		n, err := strconv.ParseUint(prefix, 10, 64)
+		if err != nil {
+			return statistics
+		}
+
+		if stats, ok := statistics.PerSlabStatistics[uint(n)]; ok {
+			return stats
+		}
+
+		stats := &PerSlabStatistics{}
+		statistics.PerSlabStatistics[uint(n)] = stats
+
+		return stats
+	}); err != nil {
+		return nil, err
+	}
+
+	return statistics, nil
+}
 
 var statPrefix = []byte("STAT ")
 

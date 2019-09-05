@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/fatih/pool"
+	"github.com/serialx/hashring"
 )
 
 type connectionProvider interface {
@@ -110,10 +111,15 @@ func (p *roundRobinConnectionProvider) ForEach() ([]net.Conn, error) {
 }
 
 type consistentHashConnnectionProvider struct {
+	ring *hashring.HashRing
 }
 
 func newConsistentHashConnectionProvider(addresses []string, minCons, maxCons int, connectTimeout time.Duration) (*consistentHashConnnectionProvider, error) {
+	ring := hashring.New(addresses)
 
+	return &consistentHashConnnectionProvider{
+		ring: ring,
+	}, nil
 }
 
 func (p *consistentHashConnnectionProvider) ForKey(key string) (net.Conn, error) {

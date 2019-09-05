@@ -563,6 +563,19 @@ var testCases = []struct {
 			}
 		},
 	},
+	{
+		name: "SlabsStatisticsForAddress",
+		test: func(t *testing.T, client *Client) {
+			statistics, err := client.SlabsStatisticsForAddress(memcachedAddress)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			if len(statistics.PerSlabStatistics) == 0 {
+				t.Fatal("Expected cache to have at least one slab")
+			}
+		},
+	},
 }
 
 func TestAgainstMemcached(t *testing.T) {
