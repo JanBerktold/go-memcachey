@@ -553,6 +553,9 @@ var testCases = []struct {
 	{
 		name: "ItemStatisticsForAddress",
 		test: func(t *testing.T, client *Client) {
+			// make sure that we have some data in the cache
+			writeGarbageData(t, client)
+
 			settings, err := client.ItemStatisticsForAddress(memcachedAddress)
 			if err != nil {
 				t.Fatalf("Expected no error, got %v", err)
@@ -563,23 +566,64 @@ var testCases = []struct {
 			}
 		},
 	},
+	{
+		name: "SlabsStatisticsForAddress",
+		test: func(t *testing.T, client *Client) {
+			// make sure that we have some data in the cache
+			writeGarbageData(t, client)
+
+			statistics, err := client.SlabsStatisticsForAddress(memcachedAddress)
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			if len(statistics.PerSlabStatistics) == 0 {
+				t.Fatal("Expected cache to have at least one slab")
+			}
+		},
+	},
 }
 
 func TestAgainstMemcached(t *testing.T) {
-	for _, test := range testCases {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			if !test.exclusive {
-				t.Parallel()
-			}
+	var configurations = []struct {
+		clientGetter func(addresses []string) (*Client, error)
+		nameGetter   func(name string) string
+	}{
+		{
+			clientGetter: func(addresses []string) (*Client, error) {
+				return NewClient(addresses)
+			},
+			nameGetter: func(name string) string {
+				return name
+			},
+		},
+		{
+			clientGetter: func(addresses []string) (*Client, error) {
+				return NewClient(addresses, WithConsistentHashing())
+			},
+			nameGetter: func(name string) string {
+				return fmt.Sprintf("%s_consistent", name)
+			},
+		},
+	}
 
-			client, err := NewClient([]string{memcachedAddress})
-			if err != nil {
-				t.Fatalf("Failed to create client: %v", err)
-			}
+	for _, configuration := range configurations {
+		for _, test := range testCases {
+			test := test
+			t.Run(configuration.nameGetter(test.name), func(t *testing.T) {
+				if !test.exclusive {
+					t.Parallel()
+				}
 
-			test.test(t, client)
-		})
+				client, err := configuration.clientGetter([]string{memcachedAddress})
+
+				if err != nil {
+					t.Fatalf("Failed to create client: %v", err)
+				}
+
+				test.test(t, client)
+			})
+		}
 	}
 }
 
@@ -595,4 +639,12 @@ func memcachedTestKeys(t *testing.T, num int) []string {
 	}
 
 	return result
+}
+
+func writeGarbageData(t *testing.T, client *Client) {
+	for i := 1; i < 30; i++ {
+		if err := client.Set(fmt.Sprintf("some_data_%s_%d", t.Name(), i), someByteValue); err != nil {
+			t.Fatalf("Failed to write data: %v", err)
+		}
+	}
 }

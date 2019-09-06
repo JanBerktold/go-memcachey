@@ -5,7 +5,7 @@
 go-memcachey is a [Golang](https://golang.org/) client library for the Memcached in-memory database. See [godoc](https://godoc.org/github.com/janberktold/go-memcachey) for documentation.
 
 # Example
-
+## Basic Example
 ```go
 import "github.com/janberktold/go-memcachey"
 
@@ -13,9 +13,24 @@ func main() {
     client, _ := memcachey.NewClient([]string{"127.0.0.1:11211"})
 
     // Set a value to Memcached
-    client.Get("some_key", []byte{1, 2, 3})
+    client.Set("some_key", []byte{1, 2, 3})
 
     // Read the value back
+    value, _ := client.Get("some_key")
+
+    fmt.Printf("Read %v from Memcached!", value)
+}
+```
+
+## Customized client
+```go
+func main() {
+    client, _ := memcachey.NewClient([]string{"127.0.0.1:11211"},
+                    memcachey.WithConsistentHashing(),
+                    memcachey.WithPoolLimitsPerHost(20, 100),
+                    memcachey.WithTimeouts(10 * time.Second))
+
+    // Read a value from Memcached
     value, _ := client.Get("some_key")
 
     fmt.Printf("Read %v from Memcached!", value)

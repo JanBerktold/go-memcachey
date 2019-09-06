@@ -17,11 +17,13 @@
 package memcachey
 
 import (
+	"errors"
 	"net"
 	"sync/atomic"
 	"time"
 
 	"github.com/fatih/pool"
+	"github.com/serialx/hashring"
 )
 
 type connectionProvider interface {
@@ -38,26 +40,9 @@ type roundRobinConnectionProvider struct {
 }
 
 func newRoundRobinConnectionProvider(addresses []string, minCons, maxCons int, connectTimeout time.Duration) (*roundRobinConnectionProvider, error) {
-	pools := make([]pool.Pool, len(addresses))
-	poolsByAddress := make(map[string]pool.Pool, len(addresses))
-
-	for i, address := range addresses {
-		address := address
-		p, err := pool.NewChannelPool(minCons, maxCons, func() (net.Conn, error) {
-			conn, err := net.DialTimeout("tcp", address, connectTimeout)
-			if err != nil {
-				return nil, err
-			}
-
-			return conn, nil
-		})
-
-		if err != nil {
-			return nil, err
-		}
-
-		pools[i] = p
-		poolsByAddress[address] = p
+	pools, poolsByAddress, err := buildPools(addresses, minCons, maxCons, connectTimeout)
+	if err != nil {
+		return nil, err
 	}
 
 	return &roundRobinConnectionProvider{
@@ -107,4 +92,112 @@ func (p *roundRobinConnectionProvider) ForEach() ([]net.Conn, error) {
 	}
 
 	return result, nil
+}
+
+type consistentHashConnnectionProvider struct {
+	ring           *hashring.HashRing
+	pools          []pool.Pool
+	poolsByAddress map[string]pool.Pool
+}
+
+func newConsistentHashConnectionProvider(addresses []string, minCons, maxCons int, connectTimeout time.Duration) (*consistentHashConnnectionProvider, error) {
+	ring := hashring.New(addresses)
+
+	pools, poolsByAddress, err := buildPools(addresses, minCons, maxCons, connectTimeout)
+	if err != nil {
+		return nil, err
+	}
+
+	return &consistentHashConnnectionProvider{
+		ring:           ring,
+		pools:          pools,
+		poolsByAddress: poolsByAddress,
+	}, nil
+}
+
+func (p *consistentHashConnnectionProvider) ForKey(key string) (net.Conn, error) {
+	address, ok := p.ring.GetNode(key)
+	if !ok {
+		return nil, errors.New("failed to get slot")
+	}
+
+	return p.poolsByAddress[address].Get()
+}
+
+func (p *consistentHashConnnectionProvider) ForKeys(keys []string) (map[net.Conn][]string, error) {
+	addressToKeys := map[string][]string{}
+
+	for _, key := range keys {
+		address, ok := p.ring.GetNode(key)
+		if !ok {
+			return nil, errors.New("failed to get slot")
+		}
+
+		if array, ok := addressToKeys[address]; ok {
+			addressToKeys[address] = append(array, key)
+		} else {
+			addressToKeys[address] = []string{key}
+		}
+	}
+
+	connectionsToKeys := map[net.Conn][]string{}
+
+	for address, keys := range addressToKeys {
+		conn, err := p.poolsByAddress[address].Get()
+		if err != nil {
+			return nil, err
+		}
+
+		connectionsToKeys[conn] = keys
+	}
+	return connectionsToKeys, nil
+}
+
+func (p *consistentHashConnnectionProvider) ForAddress(address string) (net.Conn, error) {
+	if pool, ok := p.poolsByAddress[address]; ok {
+		return pool.Get()
+	}
+
+	return nil, ErrNoSuchAddress
+}
+
+func (p *consistentHashConnnectionProvider) ForEach() ([]net.Conn, error) {
+	result := make([]net.Conn, len(p.pools))
+
+	for i, pool := range p.pools {
+		conn, err := pool.Get()
+		if err != nil {
+			return nil, err
+		}
+
+		result[i] = conn
+	}
+
+	return result, nil
+}
+
+func buildPools(addresses []string, minCons, maxCons int, connectTimeout time.Duration) ([]pool.Pool, map[string]pool.Pool, error) {
+	pools := make([]pool.Pool, len(addresses))
+	poolsByAddress := make(map[string]pool.Pool, len(addresses))
+
+	for i, address := range addresses {
+		address := address
+		p, err := pool.NewChannelPool(minCons, maxCons, func() (net.Conn, error) {
+			conn, err := net.DialTimeout("tcp", address, connectTimeout)
+			if err != nil {
+				return nil, err
+			}
+
+			return conn, nil
+		})
+
+		if err != nil {
+			return nil, nil, err
+		}
+
+		pools[i] = p
+		poolsByAddress[address] = p
+	}
+
+	return pools, poolsByAddress, nil
 }
