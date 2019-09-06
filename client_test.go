@@ -553,6 +553,9 @@ var testCases = []struct {
 	{
 		name: "ItemStatisticsForAddress",
 		test: func(t *testing.T, client *Client) {
+			// make sure that we have some data in the cache
+			writeGarbageData(t, client)
+
 			settings, err := client.ItemStatisticsForAddress(memcachedAddress)
 			if err != nil {
 				t.Fatalf("Expected no error, got %v", err)
@@ -566,6 +569,9 @@ var testCases = []struct {
 	{
 		name: "SlabsStatisticsForAddress",
 		test: func(t *testing.T, client *Client) {
+			// make sure that we have some data in the cache
+			writeGarbageData(t, client)
+
 			statistics, err := client.SlabsStatisticsForAddress(memcachedAddress)
 			if err != nil {
 				t.Fatalf("Expected no error, got %v", err)
@@ -596,7 +602,7 @@ func TestAgainstMemcached(t *testing.T) {
 				return NewClient(addresses, WithConsistentHashing())
 			},
 			nameGetter: func(name string) string {
-				return fmt.Sprintf("%s_consitent", name)
+				return fmt.Sprintf("%s_consistent", name)
 			},
 		},
 	}
@@ -633,4 +639,12 @@ func memcachedTestKeys(t *testing.T, num int) []string {
 	}
 
 	return result
+}
+
+func writeGarbageData(t *testing.T, client *Client) {
+	for i := 1; i < 30; i++ {
+		if err := client.Set(fmt.Sprintf("some_data_%s_%d", t.Name(), i), someByteValue); err != nil {
+			t.Fatalf("Failed to write data: %v", err)
+		}
+	}
 }
