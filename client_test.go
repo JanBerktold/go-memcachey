@@ -579,20 +579,45 @@ var testCases = []struct {
 }
 
 func TestAgainstMemcached(t *testing.T) {
-	for _, test := range testCases {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			if !test.exclusive {
-				t.Parallel()
-			}
+	var configurations = []struct {
+		clientGetter func(addresses []string) (*Client, error)
+		nameGetter   func(name string) string
+	}{
+		{
+			clientGetter: func(addresses []string) (*Client, error) {
+				return NewClient(addresses)
+			},
+			nameGetter: func(name string) string {
+				return name
+			},
+		},
+		{
+			clientGetter: func(addresses []string) (*Client, error) {
+				return NewClient(addresses, WithConsistentHashing())
+			},
+			nameGetter: func(name string) string {
+				return fmt.Sprintf("%s_consitent", name)
+			},
+		},
+	}
 
-			client, err := NewClient([]string{memcachedAddress})
-			if err != nil {
-				t.Fatalf("Failed to create client: %v", err)
-			}
+	for _, configuration := range configurations {
+		for _, test := range testCases {
+			test := test
+			t.Run(configuration.nameGetter(test.name), func(t *testing.T) {
+				if !test.exclusive {
+					t.Parallel()
+				}
 
-			test.test(t, client)
-		})
+				client, err := configuration.clientGetter([]string{memcachedAddress})
+
+				if err != nil {
+					t.Fatalf("Failed to create client: %v", err)
+				}
+
+				test.test(t, client)
+			})
+		}
 	}
 }
 

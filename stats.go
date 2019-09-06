@@ -101,7 +101,7 @@ type Statistics struct {
 	CheckAndSetMisses uint64 `proto:"cas_misses"`
 
 	// Number of successful CAS reqs
-	CheckAndSetHits uint64 `proto:"cas_hits`
+	CheckAndSetHits uint64 `proto:"cas_hits"`
 
 	// Number of CAS reqs for which a key was found, but the CAS value did not match
 	CheckAndSetBadValue uint64 `proto:"cas_badval"`
